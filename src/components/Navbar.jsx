@@ -31,11 +31,7 @@ function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
-<<<<<<< Updated upstream
     const onScroll = () => setScrolled(window.scrollY > 4);
-=======
-    const onScroll = () => setScrolled(window.scrollY > 20);
->>>>>>> Stashed changes
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
@@ -85,34 +81,6 @@ function Navbar() {
           width: 100%;
         }
 
-<<<<<<< Updated upstream
-        <div className="flex items-center gap-4 sm:gap-6 md:gap-8 flex-shrink-0">
-          {user?.role === "admin" && (
-            <NavLink to="/admin" end className={authLinkClass}>
-              Admin
-            </NavLink>
-          )}
-          {user ? (
-            <button
-              type="button"
-              onClick={handleLogout}
-              className={`${authLinkClass({ isActive: false })} border-0 bg-transparent cursor-pointer`}
-            >
-              Logout
-            </button>
-          ) : (
-            <>
-              <NavLink to="/login" end className={authLinkClass}>
-                Login
-              </NavLink>
-              <span className="h-4 w-px bg-slate-200" aria-hidden />
-              <NavLink to="/register" end className={authLinkClass}>
-                Register
-              </NavLink>
-            </>
-          )}
-        </div>
-=======
         .navbar-scrolled {
           background: rgba(255, 255, 255, 0.92);
           backdrop-filter: blur(16px);
@@ -124,7 +92,6 @@ function Navbar() {
           background: #ffffff;
           border-bottom: 1px solid #e8edf2;
         }
->>>>>>> Stashed changes
 
         .login-btn {
           font-family: 'Libre Baskerville', serif;

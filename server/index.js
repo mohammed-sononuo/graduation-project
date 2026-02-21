@@ -82,19 +82,30 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.post('/api/auth/google', async (req, res) => {
-  const { credential } = req.body || {};
-  if (!credential) {
-    return res.status(400).json({ error: 'Missing Google credential' });
+  const { credential, access_token } = req.body || {};
+  if (!credential && !access_token) {
+    return res.status(400).json({ error: 'Missing Google credential or access_token' });
   }
   try {
-    const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`;
-    const resp = await fetch(url);
-    const data = await resp.json();
-    if (!resp.ok) {
-      return res.status(401).json({ error: 'Invalid Google sign-in. Please try again.' });
+    let data;
+    if (credential) {
+      const url = `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`;
+      const resp = await fetch(url);
+      data = await resp.json();
+      if (!resp.ok) {
+        return res.status(401).json({ error: 'Invalid Google sign-in. Please try again.' });
+      }
+    } else {
+      const resp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${access_token}` },
+      });
+      data = await resp.json();
+      if (!resp.ok) {
+        return res.status(401).json({ error: 'Invalid Google sign-in. Please try again.' });
+      }
     }
     const email = data.email;
-    if (!email || !data.email_verified) {
+    if (!email || (data.email_verified === false)) {
       return res.status(401).json({ error: 'Could not verify your Google account.' });
     }
     if (!isValidNajahEmail(email)) {
