@@ -1,14 +1,63 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { apiUrl } from '../api';
+
+const ALLOWED_DOMAINS = ['@stu.najah.edu', '@najah.edu'];
+function isValidNajahEmail(email) {
+  if (!email || typeof email !== 'string') return false;
+  const normalized = email.trim().toLowerCase();
+  return ALLOWED_DOMAINS.some((d) => normalized.endsWith(d.toLowerCase()));
+}
 
 function Register() {
+  const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    setMessage('Registration is not yet connected. Please contact the university for enrollment.');
+    setError('');
+    setMessage('');
+    if (!email.trim()) {
+      setError('Please enter your email.');
+      return;
+    }
+    if (!isValidNajahEmail(email)) {
+      setError('Please use a university email (@stu.najah.edu or @najah.edu).');
+      return;
+    }
+    if (!password || password.length < 4) {
+      setError('Password must be at least 4 characters.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const res = await fetch(apiUrl('/api/auth/register'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim().toLowerCase(),
+          password,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.error || 'Registration failed. Please try again.');
+        return;
+      }
+      if (data.user) {
+        localStorage.setItem('user', JSON.stringify(data.user));
+        setMessage('Account created! Redirecting to home…');
+        setTimeout(() => navigate('/', { replace: true }), 800);
+      }
+    } catch {
+      setError('Cannot connect to server. Please try again later.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const layeredBg = {
@@ -61,16 +110,22 @@ function Register() {
                 className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00356b]/20 focus:border-[#00356b]"
               />
             </div>
+            {error && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+                {error}
+              </div>
+            )}
             {message && (
-              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
                 {message}
               </div>
             )}
             <button
               type="submit"
-              className="w-full inline-flex items-center justify-center rounded-xl bg-[#00356b] px-6 py-3 text-white font-semibold shadow-sm hover:bg-[#002a54] focus:outline-none focus:ring-2 focus:ring-[#00356b]/30 focus:ring-offset-2"
+              disabled={loading}
+              className="w-full inline-flex items-center justify-center rounded-xl bg-[#00356b] px-6 py-3 text-white font-semibold shadow-sm hover:bg-[#002a54] focus:outline-none focus:ring-2 focus:ring-[#00356b]/30 focus:ring-offset-2 disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              Create account
+              {loading ? 'Creating account…' : 'Create account'}
             </button>
           </form>
           <p className="mt-8 text-center text-sm text-slate-600">

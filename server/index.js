@@ -53,6 +53,45 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, message: 'Backend running' });
 });
 
+app.post('/api/auth/register', async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Email and password are required.' });
+  }
+  const emailNorm = String(email).trim().toLowerCase();
+  if (!isValidNajahEmail(emailNorm)) {
+    return res.status(400).json({
+      error: 'Please use a university email (@stu.najah.edu or @najah.edu).',
+    });
+  }
+  if (password.length < 4) {
+    return res.status(400).json({ error: 'Password must be at least 4 characters.' });
+  }
+  try {
+    const existing = await pool.query('SELECT 1 FROM app_users WHERE email = $1 LIMIT 1', [emailNorm]);
+    if (existing.rows.length > 0) {
+      return res.status(409).json({ error: 'An account with this email already exists. Please log in.' });
+    }
+    const hash = await bcrypt.hash(password, 10);
+    const r = await pool.query(
+      "INSERT INTO app_users (email, password_hash, role) VALUES ($1, $2, 'user') RETURNING id, email, role",
+      [emailNorm, hash]
+    );
+    const user = r.rows[0];
+    res.status(201).json({
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        name: user.email,
+      },
+    });
+  } catch (err) {
+    console.error('Register error:', err);
+    res.status(500).json({ error: 'Registration failed. Please try again.' });
+  }
+});
+
 app.post('/api/auth/login', async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) {

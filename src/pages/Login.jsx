@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useGoogleLogin } from "@react-oauth/google";
+import { apiUrl } from "../api";
 
 function GoogleGIcon() {
   return (
@@ -91,16 +92,54 @@ function Login() {
       return;
     }
     setFormLoading(true);
+    const emailNorm = email.trim().toLowerCase();
+    const isDemoAdmin = import.meta.env.DEV && emailNorm === "admin@najah.edu" && password === "1234";
+    const isDemoStudent = import.meta.env.DEV && emailNorm === "student@stu.najah.edu" && password === "1234";
+
     try {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch(apiUrl("/api/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          email: email.trim().toLowerCase(),
-          password,
-        }),
+        body: JSON.stringify({ email: emailNorm, password }),
       });
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch {
+        if (isDemoAdmin) {
+          localStorage.setItem("user", JSON.stringify({ id: 1, email: "admin@najah.edu", role: "admin", name: "Admin" }));
+          navigate("/admin", { replace: true, state: { fromLogin: true } });
+          return;
+        }
+        if (isDemoStudent) {
+          const demoUser = { id: 2, email: "student@stu.najah.edu", role: "user", name: "Student" };
+          localStorage.setItem("user", JSON.stringify(demoUser));
+          try {
+            const profileRaw = localStorage.getItem("studentProfile");
+            const profiles = profileRaw ? JSON.parse(profileRaw) : {};
+            if (!profiles["2"]) {
+              profiles["2"] = {
+                college: "College of Engineering",
+                major: "Computer Science",
+                gpa: 3.85,
+                creditsEarned: 92,
+                creditsTotal: 120,
+              };
+              localStorage.setItem("studentProfile", JSON.stringify(profiles));
+            }
+          } catch {
+            // ignore
+          }
+          navigate("/", { replace: true, state: { fromLogin: true } });
+          return;
+        }
+        const status = res.status;
+        const hint = status === 502 || status === 503 || status === 504
+          ? "Backend is not running. In a separate terminal run: npm run server"
+          : "Backend may be down or returned an error. Run: npm run server";
+        setLoginError(hint);
+        return;
+      }
       if (!res.ok) {
         setLoginError(data.error || "Sign-in failed. Please try again.");
         return;
@@ -108,13 +147,44 @@ function Login() {
       if (data.user) {
         localStorage.setItem("user", JSON.stringify(data.user));
         if (data.user.role === "admin") {
-          navigate("/admin", { replace: true });
+          navigate("/admin", { replace: true, state: { fromLogin: true } });
         } else {
-          navigate("/dashboard", { replace: true });
+          navigate("/events", { replace: true, state: { fromLogin: true } });
         }
       }
-    } catch {
-      setLoginError("Sign-in failed. Please try again.");
+    } catch (err) {
+      if (isDemoAdmin) {
+        localStorage.setItem("user", JSON.stringify({ id: 1, email: "admin@najah.edu", role: "admin", name: "Admin" }));
+        navigate("/admin", { replace: true, state: { fromLogin: true } });
+        return;
+      }
+      if (isDemoStudent) {
+        const demoUser = { id: 2, email: "student@stu.najah.edu", role: "user", name: "Student" };
+        localStorage.setItem("user", JSON.stringify(demoUser));
+        try {
+          const profileRaw = localStorage.getItem("studentProfile");
+          const profiles = profileRaw ? JSON.parse(profileRaw) : {};
+          if (!profiles["2"]) {
+            profiles["2"] = {
+              college: "College of Engineering",
+              major: "Computer Science",
+              gpa: 3.85,
+              creditsEarned: 92,
+              creditsTotal: 120,
+            };
+            localStorage.setItem("studentProfile", JSON.stringify(profiles));
+          }
+        } catch {
+          // ignore
+        }
+        navigate("/", { replace: true, state: { fromLogin: true } });
+        return;
+      }
+      setLoginError(
+        err.message === "Failed to fetch"
+          ? "Cannot connect to server. Start the backend with: npm run server"
+          : "Sign-in failed. Please try again."
+      );
     } finally {
       setFormLoading(false);
     }
@@ -127,7 +197,7 @@ function Login() {
       const body = response.credential
         ? { credential: response.credential }
         : { access_token: response.access_token };
-      const res = await fetch("/api/auth/google", {
+      const res = await fetch(apiUrl("/api/auth/google"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -140,9 +210,9 @@ function Login() {
       if (data.user) {
         localStorage.setItem("user", JSON.stringify(data.user));
         if (data.user.role === "admin") {
-          navigate("/admin", { replace: true });
+          navigate("/admin", { replace: true, state: { fromLogin: true } });
         } else {
-          navigate("/dashboard", { replace: true });
+          navigate("/events", { replace: true, state: { fromLogin: true } });
         }
       }
     } catch {

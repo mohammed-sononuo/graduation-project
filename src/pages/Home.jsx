@@ -1,11 +1,97 @@
-import { Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import EventsCarousel from '../components/EventsCarousel';
 
 const HERO_IMAGE = '/hero-campus.png';
 
 function Home() {
+  const location = useLocation();
+  const [user, setUser] = useState(null);
+  const [dismissWelcome, setDismissWelcome] = useState(false);
+  const [welcomeExiting, setWelcomeExiting] = useState(false);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('user');
+      setUser(stored ? JSON.parse(stored) : null);
+    } catch {
+      setUser(null);
+    }
+  }, [location.pathname]);
+
+  const fromLogin = Boolean(location.state?.fromLogin) && !dismissWelcome;
+  const isStudent = user && user.role !== 'admin';
+  const showWelcomeMessage = (fromLogin && isStudent) || welcomeExiting;
+  const welcomeExitingActive = welcomeExiting;
+
+  const startWelcomeExit = () => {
+    if (welcomeExiting) return;
+    setWelcomeExiting(true);
+  };
+
+  const handleWelcomeAnimationEnd = (e) => {
+    if (e.animationName === 'welcomeSlideUp') {
+      setDismissWelcome(true);
+      setWelcomeExiting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!fromLogin || !isStudent) return;
+    const timer = setTimeout(startWelcomeExit, 3000);
+    return () => clearTimeout(timer);
+  }, [fromLogin, isStudent]);
+
+  const welcomeText = user ? `Welcome, ${user.name || user.email || 'Student'}` : 'Welcome';
+
   return (
     <div className="text-gray-900">
+      {showWelcomeMessage && (
+        <>
+          <style>{`
+            @keyframes welcomeSlideDown {
+              from { transform: translateY(-100%); opacity: 0; }
+              to { transform: translateY(0); opacity: 1; }
+            }
+            @keyframes welcomeSlideUp {
+              from { transform: translateY(0); opacity: 1; }
+              to { transform: translateY(-100%); opacity: 0; }
+            }
+            .welcome-enter-home { animation: welcomeSlideDown 0.45s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+            .welcome-exit-home { animation: welcomeSlideUp 0.7s cubic-bezier(0.22, 1, 0.36, 1) forwards; }
+            .welcome-academic-home { font-family: 'Libre Baskerville', Georgia, serif; }
+          `}</style>
+          <div className="fixed top-0 left-0 right-0 z-50 overflow-hidden pointer-events-none">
+            <div
+              className={`max-w-7xl mx-auto px-6 lg:px-10 pt-4 pb-2 pointer-events-auto ${welcomeExitingActive ? 'welcome-exit-home' : 'welcome-enter-home'}`}
+              onAnimationEnd={handleWelcomeAnimationEnd}
+            >
+              <div className="welcome-academic-home flex items-center justify-between gap-6 rounded-lg border border-slate-200/90 bg-white shadow-[0_4px_20px_rgba(0,53,107,0.08)] overflow-hidden">
+                <div className="flex items-center gap-4 min-w-0 flex-1 py-4 pl-5 pr-4 border-l-4 border-[#00356b]">
+                  <div className="flex-shrink-0 w-10 h-10 rounded-full bg-[#00356b]/10 flex items-center justify-center">
+                    <svg className="w-5 h-5 text-[#00356b]" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 14l9-5-9-5-9 5 9 5z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
+                    </svg>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-slate-500">An-Najah National University</p>
+                    <p className="mt-0.5 text-[#0b2d52] text-lg font-semibold tracking-tight">{welcomeText}</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={startWelcomeExit}
+                  className="flex-shrink-0 mr-4 text-slate-400 hover:text-slate-600 p-2 focus:outline-none focus:ring-2 focus:ring-[#00356b]/20 rounded-full transition-colors"
+                  aria-label="Dismiss"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
       {/* Hero Section — academic, calm */}
       <section className="relative flex h-screen min-h-[400px] w-full items-end">
         <div className="absolute inset-0 z-0">

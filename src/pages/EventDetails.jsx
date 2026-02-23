@@ -8,6 +8,7 @@ import { getManagedEvents, mapManagedToPublicEvent } from '../data/managedEvents
 const REVIEW_MAX_CHARS = 300;
 const REVIEWS_SECTION_ID = 'event-reviews';
 const FEEDBACK_DISPLAYED_ON_PAGE = 2;
+const EVENT_REGISTRATIONS_KEY = 'eventRegistrations';
 
 const MOCK_REVIEWS_INITIAL = [
   { id: '1', name: 'Dr. James Davidson', initials: 'JD', rating: 5, comment: 'An inspiring evening of academic excellence. The cross-disciplinary dialogue was particularly enlightening.', createdAt: '2024-09-20T14:00:00Z' },
@@ -559,6 +560,30 @@ function EventDetails() {
     }
     setRegErrors({});
     setRegSubmitted(true);
+    try {
+      const userRaw = localStorage.getItem('user');
+      const user = userRaw ? JSON.parse(userRaw) : null;
+      if (user && event) {
+        const raw = localStorage.getItem(EVENT_REGISTRATIONS_KEY);
+        const data = raw ? JSON.parse(raw) : {};
+        const userId = String(user.id);
+        const list = Array.isArray(data[userId]) ? data[userId] : [];
+        if (!list.some((r) => r.eventId === event.id)) {
+          list.push({
+            eventId: event.id,
+            title: event.title,
+            date: event.date,
+            time: event.time,
+            image: event.image,
+            location: event.location,
+          });
+          data[userId] = list;
+          localStorage.setItem(EVENT_REGISTRATIONS_KEY, JSON.stringify(data));
+        }
+      }
+    } catch (err) {
+      console.warn('Could not save registration to profile', err);
+    }
   };
 
   return (

@@ -1,13 +1,33 @@
-import { useState, useEffect } from "react";
-import { NavLink, useLocation } from "react-router-dom";
+import { useState, useEffect, useRef } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 
 const centerLinks = [
   { to: "/", label: "Home", end: true },
   { to: "/colleges", label: "Colleges" },
   { to: "/majors", label: "Majors" },
   { to: "/events", label: "Events" },
-  { to: "/manage-events", label: "Manage Events" },
+  { to: "/admin", label: "Admin Portal", adminOnly: true },
 ];
+
+const NOTIFICATIONS_KEY = "navbarNotifications";
+
+function loadNotifications() {
+  try {
+    const raw = localStorage.getItem(NOTIFICATIONS_KEY);
+    const data = raw ? JSON.parse(raw) : [];
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveNotifications(list) {
+  try {
+    localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(list));
+  } catch {
+    // ignore
+  }
+}
 
 function LogoPlaceholder({ className = "" }) {
   return (
@@ -26,10 +46,17 @@ function LogoPlaceholder({ className = "" }) {
 
 function Navbar() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [logoError, setLogoError] = useState(false);
   const [user, setUser] = useState(null);
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [open, setOpen] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notifications, setNotifications] = useState(loadNotifications);
+  const avatarRef = useRef(null);
+  const notifRef = useRef(null);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 4);
@@ -46,11 +73,57 @@ function Navbar() {
     }
   }, [location.pathname]);
 
+  useEffect(() => {
+    const list = loadNotifications();
+    if (list.length === 0 && user) {
+      const welcome = [{ id: "welcome-1", title: "Welcome", message: "You are logged in to An-Najah National University.", read: false, createdAt: Date.now() }];
+      setNotifications(welcome);
+      saveNotifications(welcome);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handleClickOutside = (e) => {
+      if (avatarRef.current && !avatarRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
+  }, [open]);
+
+  useEffect(() => {
+    if (!notificationOpen) return;
+    const handleClickOutside = (e) => {
+      if (notifRef.current && !notifRef.current.contains(e.target)) {
+        setNotificationOpen(false);
+      }
+    };
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
+  }, [notificationOpen]);
+
+  const unreadCount = notifications.filter((n) => !n.read).length;
+
+  const markAllRead = () => {
+    const next = notifications.map((n) => ({ ...n, read: true }));
+    setNotifications(next);
+    saveNotifications(next);
+  };
+
   const handleLogout = () => {
+    setShowLogoutConfirm(false);
+    setOpen(false);
+    setMenuOpen(false);
     localStorage.removeItem("user");
     setUser(null);
-    window.location.href = "/login";
+    navigate("/login", { replace: true });
   };
+
+  const userInitial = user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "?";
+  const isAdmin = user?.role === "admin";
+  const visibleCenterLinks = centerLinks.filter((link) => !link.adminOnly || isAdmin);
 
   const centerLinkClass = ({ isActive }) =>
     `relative text-sm font-medium tracking-wide transition-all duration-200 pb-1 group
@@ -181,7 +254,7 @@ function Navbar() {
 
           {/* Center links — desktop only */}
           <nav className="hidden lg:flex flex-1 justify-center gap-8 xl:gap-10 min-w-0" aria-label="Main">
-            {centerLinks.map(({ to, label, end }) => (
+            {visibleCenterLinks.map(({ to, label, end }) => (
               <NavLink
                 key={label}
                 to={to}
@@ -197,26 +270,108 @@ function Navbar() {
             ))}
           </nav>
 
-          {/* Right side: auth */}
+          {/* Right side: auth + notifications */}
           <div className="hidden lg:flex items-center gap-3 flex-shrink-0">
-            {user?.role === "admin" && (
-              <NavLink
-                to="/admin"
-                end
-                className="login-btn"
-                style={{ textDecoration: 'none' }}
-              >
-                Admin
-              </NavLink>
-            )}
             {user ? (
-              <button
-                type="button"
-                onClick={handleLogout}
-                className="login-btn"
-              >
-                Logout
-              </button>
+              <>
+                <div className="relative" ref={notifRef}>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setNotificationOpen((o) => !o); setOpen(false); }}
+                    className="relative p-2 rounded-full text-slate-600 hover:text-[#00356b] hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-[#00356b]/20 transition-colors"
+                    aria-expanded={notificationOpen}
+                    aria-label={unreadCount ? `${unreadCount} unread notifications` : "Notifications"}
+                  >
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                    </svg>
+                    {unreadCount > 0 && (
+                      <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-red-500 ring-2 ring-white" aria-hidden />
+                    )}
+                  </button>
+                  {notificationOpen && (
+                    <div className="absolute right-0 mt-2 w-80 max-h-[min(24rem,70vh)] bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden z-50 flex flex-col">
+                      <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+                        <span className="text-sm font-semibold text-slate-900">Notifications</span>
+                        {unreadCount > 0 && (
+                          <button type="button" onClick={markAllRead} className="text-xs font-medium text-[#00356b] hover:underline">
+                            Mark all read
+                          </button>
+                        )}
+                      </div>
+                      <div className="overflow-y-auto flex-1">
+                        {notifications.length === 0 ? (
+                          <p className="px-4 py-6 text-sm text-slate-500 text-center">No notifications yet.</p>
+                        ) : (
+                          <ul className="py-2">
+                            {notifications.map((n) => (
+                              <li key={n.id} className={`px-4 py-3 border-b border-slate-50 last:border-0 ${!n.read ? "bg-[#00356b]/5" : ""}`}>
+                                <p className="text-sm font-medium text-slate-900">{n.title}</p>
+                                <p className="text-xs text-slate-500 mt-0.5">{n.message}</p>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <div className="relative" ref={avatarRef}>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); setNotificationOpen(false); setOpen((o) => !o); }}
+                  className="relative h-10 w-10 rounded-full bg-blue-900 text-white font-semibold flex items-center justify-center cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-900/30 focus:ring-offset-2"
+                  aria-expanded={open}
+                  aria-haspopup="true"
+                  aria-label="User menu"
+                >
+                  <span>{userInitial}</span>
+                  {isAdmin && (
+                    <span
+                      className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-green-500 border-2 border-white"
+                      aria-hidden
+                    />
+                  )}
+                </button>
+                {open && (
+                  <div
+                    className="absolute right-0 mt-2 w-56 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden z-50"
+                    role="menu"
+                  >
+                    <div className="px-4 py-3 flex items-center gap-3 border-b border-slate-100">
+                      <div className="relative flex-shrink-0 h-10 w-10 rounded-full bg-blue-900 text-white font-semibold flex items-center justify-center text-sm">
+                        <span>{userInitial}</span>
+                        {isAdmin && (
+                          <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-green-500 border-2 border-white" aria-hidden />
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-semibold text-slate-900 truncate">{user?.name || 'User'}</p>
+                        <p className="text-xs text-slate-500 truncate">{user?.email || ''}</p>
+                      </div>
+                    </div>
+                    <NavLink
+                      to="/profile"
+                      end
+                      className="block px-4 py-2 text-sm text-slate-700 hover:bg-gray-100 cursor-pointer transition-colors"
+                      style={{ textDecoration: 'none' }}
+                      onClick={() => setOpen(false)}
+                      role="menuitem"
+                    >
+                      Profile
+                    </NavLink>
+                    <button
+                      type="button"
+                      onClick={() => { setOpen(false); setShowLogoutConfirm(true); }}
+                      className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 cursor-pointer transition-colors border-t border-slate-100 font-medium"
+                      role="menuitem"
+                    >
+                      Logout
+                    </button>
+                  </div>
+                )}
+              </div>
+              </>
             ) : (
               <NavLink
                 to="/login"
@@ -263,7 +418,7 @@ function Navbar() {
             aria-label="Mobile"
           >
             <ul className="flex flex-col gap-1">
-              {centerLinks.map(({ to, label, end }) => (
+              {visibleCenterLinks.map(({ to, label, end }) => (
                 <li key={label}>
                   <NavLink
                     to={to}
@@ -284,14 +439,24 @@ function Navbar() {
               ))}
               <li className="border-t border-slate-100 mt-2 pt-3 flex flex-col gap-2">
                 {user ? (
-                  <button
-                    type="button"
-                    onClick={() => { handleLogout(); setMenuOpen(false); }}
-                    className="login-btn text-center"
-                    style={{ width: '100%' }}
-                  >
-                    Logout
-                  </button>
+                  <>
+                    <NavLink
+                      to="/profile"
+                      end
+                      className="block py-3 px-4 rounded-md nav-text text-slate-600 hover:text-[#00356b] hover:bg-slate-50 transition-colors"
+                      style={{ textDecoration: 'none' }}
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      Profile
+                    </NavLink>
+                    <button
+                      type="button"
+                      onClick={() => { setMenuOpen(false); setShowLogoutConfirm(true); }}
+                      className="w-full text-center py-3 px-4 rounded-md text-sm font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 transition-colors"
+                    >
+                      Logout
+                    </button>
+                  </>
                 ) : (
                   <NavLink
                     to="/login"
@@ -308,6 +473,43 @@ function Navbar() {
           </nav>
         </div>
       </header>
+
+      {/* Logout confirmation modal */}
+      {showLogoutConfirm && (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/30"
+          aria-modal="true"
+          role="dialog"
+          aria-labelledby="logout-confirm-title"
+        >
+          <div className="w-full max-w-sm rounded-xl border border-slate-200 bg-white shadow-lg overflow-hidden border-l-4 border-l-[#00356b]">
+            <div className="p-6">
+              <h2 id="logout-confirm-title" className="text-lg font-semibold text-[#0b2d52]" style={{ fontFamily: "'Libre Baskerville', Georgia, serif" }}>
+                Log out?
+              </h2>
+              <p className="mt-2 text-sm text-slate-600">
+                Are you sure you want to log out?
+              </p>
+              <div className="mt-6 flex gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setShowLogoutConfirm(false)}
+                  className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#00356b]/20"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500/30"
+                >
+                  Log out
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

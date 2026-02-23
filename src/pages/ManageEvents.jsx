@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { MANAGED_EVENTS_KEY } from '../data/managedEvents';
 import SmallApprovalStepper from '../components/SmallApprovalStepper';
 
@@ -10,6 +11,7 @@ const STATUS_LABELS = {
   pending: 'PENDING APPROVAL',
   approved: 'APPROVED',
   'needs_changes': 'NEEDS CHANGES',
+  rejected: 'REJECTED',
 };
 
 const STATUS_STYLES = {
@@ -17,6 +19,7 @@ const STATUS_STYLES = {
   pending: 'bg-amber-100 text-amber-800',
   approved: 'bg-emerald-100 text-emerald-800',
   needs_changes: 'bg-red-100 text-red-800',
+  rejected: 'bg-red-100 text-red-800',
 };
 
 function loadManagedEvents() {
@@ -112,6 +115,20 @@ function EventCard({ ev, selectedId, setSelectedId, setShowForm, persist, events
               </button>
             </>
           )}
+          {ev.status === 'rejected' && (
+            <button
+              type="button"
+              onClick={() => {
+                if (window.confirm('Remove this rejected event from the list?')) {
+                  persist(events.filter((e) => e.id !== ev.id));
+                  if (selectedId === ev.id) setSelectedId(null);
+                }
+              }}
+              className="rounded-full border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 transition-colors hover:bg-red-50 focus:outline-none focus:ring-2 focus:ring-red-200"
+            >
+              Remove
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -119,6 +136,7 @@ function EventCard({ ev, selectedId, setSelectedId, setShowForm, persist, events
 }
 
 function ManageEvents() {
+  const [user, setUser] = useState(null);
   const [events, setEvents] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [form, setForm] = useState({
@@ -137,6 +155,18 @@ function ManageEvents() {
   });
   const [formErrors, setFormErrors] = useState({});
   const [showForm, setShowForm] = useState(false);
+  const [accessAllowed, setAccessAllowed] = useState(null);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('user');
+      const u = stored ? JSON.parse(stored) : null;
+      setUser(u);
+      setAccessAllowed(Boolean(u && u.role === 'admin'));
+    } catch {
+      setAccessAllowed(false);
+    }
+  }, []);
 
   useEffect(() => {
     setEvents(loadManagedEvents());
@@ -146,9 +176,6 @@ function ManageEvents() {
     setEvents(nextEvents);
     saveManagedEvents(nextEvents);
   }, []);
-
-  const selectedEvent = selectedId ? events.find((e) => e.id === selectedId) : null;
-  const eventsToShow = events.filter((e) => e.status !== 'approved');
 
   useEffect(() => {
     const ev = selectedId ? events.find((e) => e.id === selectedId) : null;
@@ -185,6 +212,34 @@ function ManageEvents() {
       setFormErrors({});
     }
   }, [selectedId, events]);
+
+  if (accessAllowed === null) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f7f6f3]">
+        <p className="text-slate-500">Loading…</p>
+      </div>
+    );
+  }
+
+  if (!accessAllowed) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f7f6f3] px-4">
+        <div className="max-w-md w-full text-center rounded-2xl border border-slate-200 bg-white shadow-sm p-8">
+          <h1 className="text-xl font-semibold text-slate-900">Access restricted</h1>
+          <p className="mt-2 text-slate-600">Manage Events is available to administrators only.</p>
+          <Link
+            to="/"
+            className="mt-6 inline-block rounded-full bg-[#00356b] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#002a54] focus:outline-none focus:ring-2 focus:ring-[#00356b]/30"
+          >
+            Back to Home
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const selectedEvent = selectedId ? events.find((e) => e.id === selectedId) : null;
+  const eventsToShow = events.filter((e) => e.status !== 'approved');
 
   const validate = () => {
     const err = {};
@@ -289,7 +344,7 @@ function ManageEvents() {
 
   return (
     <div className="min-h-screen bg-[#f7f6f3] text-slate-900">
-      {/* Hero – same pattern as Events / EventDetails */}
+      {/* Hero with breadcrumb on picture */}
       <section className="relative overflow-hidden border-b border-slate-200 bg-[#0b2d52]">
         <div
           className="absolute inset-0 opacity-90"
@@ -308,7 +363,16 @@ function ManageEvents() {
           }}
           aria-hidden
         />
-        <div className="relative max-w-6xl mx-auto px-6 lg:px-10 pt-12 pb-10">
+        <div className="relative max-w-6xl mx-auto px-6 lg:px-10 pt-6 pb-10">
+          {/* Breadcrumb on picture — light text for contrast */}
+          <nav className="text-sm mb-6" aria-label="Breadcrumb">
+            <Link to="/admin" className="text-white/80 hover:text-white transition-colors">
+              Admin Portal
+            </Link>
+            <span className="mx-2 text-white/60" aria-hidden>&gt;</span>
+            <span className="font-semibold text-white">Manage Events</span>
+          </nav>
+        <div className="pt-4">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-6">
             <div>
               <h1 className="font-serif text-3xl md:text-4xl font-semibold text-white leading-tight drop-shadow-[0_1px_2px_rgba(0,0,0,0.2)]">
@@ -511,6 +575,7 @@ function ManageEvents() {
             )}
             </div>
           </div>
+        </div>
         </div>
       </section>
 
