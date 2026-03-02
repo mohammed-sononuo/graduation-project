@@ -191,7 +191,7 @@ function Navbar() {
 
         .nav-text {
           font-family: 'EB Garamond', serif;
-          font-size: 1.05rem;
+          font-size: 1.15rem;
           font-weight: 500;
           letter-spacing: 0.02em;
         }
