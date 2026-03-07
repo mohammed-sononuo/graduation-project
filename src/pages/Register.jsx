@@ -1,16 +1,12 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { apiUrl } from '../api';
-
-const ALLOWED_DOMAINS = ['@stu.najah.edu', '@najah.edu'];
-function isValidNajahEmail(email) {
-  if (!email || typeof email !== 'string') return false;
-  const normalized = email.trim().toLowerCase();
-  return ALLOWED_DOMAINS.some((d) => normalized.endsWith(d.toLowerCase()));
-}
+import { useAuth } from '../context/AuthContext';
+import { isEmailAllowed, getEmailRuleMessage, MIN_PASSWORD_LENGTH } from '../../config/rules.js';
 
 function Register() {
   const navigate = useNavigate();
+  const { setUserAndToken } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
@@ -25,12 +21,12 @@ function Register() {
       setError('Please enter your email.');
       return;
     }
-    if (!isValidNajahEmail(email)) {
-      setError('Please use a university email (@stu.najah.edu or @najah.edu).');
+    if (!isEmailAllowed(email)) {
+      setError(getEmailRuleMessage() || 'Please use a valid university email.');
       return;
     }
-    if (!password || password.length < 4) {
-      setError('Password must be at least 4 characters.');
+    if (!password || password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
       return;
     }
     setLoading(true);
@@ -48,8 +44,8 @@ function Register() {
         setError(data.error || 'Registration failed. Please try again.');
         return;
       }
-      if (data.user) {
-        localStorage.setItem('user', JSON.stringify(data.user));
+      if (data.user && data.token) {
+        setUserAndToken(data.user, data.token);
         setMessage('Account created! Redirecting to home…');
         setTimeout(() => navigate('/', { replace: true }), 800);
       }

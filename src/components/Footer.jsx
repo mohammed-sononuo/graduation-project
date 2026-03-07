@@ -37,7 +37,7 @@ function Footer() {
         </div>
       </div>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 mt-12 pt-8 pb-6 border-t border-gray-700 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-gray-500 uppercase tracking-wide">
-        <p>© 2026 Najah University. All rights reserved.</p>
+        <p>© 2023 Najah University. All rights reserved.</p>
         <div className="flex gap-6">
           <a href="#sitemap" className="hover:text-white transition">Site Map</a>
           <a href="#feedback" className="hover:text-white transition">Feedback</a>

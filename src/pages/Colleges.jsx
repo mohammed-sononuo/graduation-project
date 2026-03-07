@@ -1,18 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { getColleges } from '../api';
 
 const INITIAL_COLLEGES_COUNT = 6;
 
-const COLLEGES = [
-  { id: '1', slug: 'engineering', name: 'College of Engineering', description: 'Advancing innovation through cutting-edge research and hands-on learning in civil, mechanical, electrical, and computer engineering.', icon: 'engineering' },
-  { id: '2', slug: 'medicine', name: 'College of Medicine', description: 'Training the next generation of healthcare leaders with rigorous clinical education and research in medical and health sciences.', icon: 'medicine' },
-  { id: '3', slug: 'arts-sciences', name: 'College of Arts & Sciences', description: 'Fostering critical thinking and creativity across humanities, natural sciences, and social sciences for a well-rounded education.', icon: 'arts' },
-  { id: '4', slug: 'business', name: 'College of Business & Economics', description: 'Preparing future leaders with strong foundations in business administration, economics, and management.', icon: 'business' },
-  { id: '5', slug: 'law', name: 'College of Law', description: 'Upholding justice and the rule of law through excellence in legal education and scholarly research.', icon: 'law' },
-  { id: '6', slug: 'it', name: 'College of Information Technology', description: 'Driving digital transformation with programs in computer science, software engineering, and information systems.', icon: 'it' },
-  { id: '7', slug: 'education', name: 'College of Education', description: 'Developing educators and researchers committed to excellence in teaching, curriculum design, and educational policy.', icon: 'arts' },
-  { id: '8', slug: 'pharmacy', name: 'College of Pharmacy', description: 'Advancing pharmaceutical sciences and patient care through research, clinical practice, and community engagement.', icon: 'medicine' },
-];
+function slugify(name) {
+  return (name || '').toLowerCase().replace(/\s+&\s+/g, '-').replace(/\s+/g, '-').replace(/&/g, 'and');
+}
 
 const ICONS = {
   engineering: (
@@ -49,10 +43,20 @@ const ICONS = {
   ),
 };
 
+const DEFAULT_DESCRIPTION = 'Dedicated to excellence in teaching, research, and innovation.';
+
 function Colleges() {
+  const [colleges, setColleges] = useState([]);
   const [showMore, setShowMore] = useState(false);
-  const visibleColleges = showMore ? COLLEGES : COLLEGES.slice(0, INITIAL_COLLEGES_COUNT);
-  const hasMore = COLLEGES.length > INITIAL_COLLEGES_COUNT;
+
+  useEffect(() => {
+    getColleges()
+      .then((list) => setColleges(Array.isArray(list) ? list.map((c) => ({ ...c, slug: slugify(c.name), description: c.description || DEFAULT_DESCRIPTION, icon: 'arts' })) : []))
+      .catch(() => setColleges([]));
+  }, []);
+
+  const visibleColleges = showMore ? colleges : colleges.slice(0, INITIAL_COLLEGES_COUNT);
+  const hasMore = colleges.length > INITIAL_COLLEGES_COUNT;
 
   return (
     <div className="text-gray-900">

@@ -1,15 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { getColleges, getMajors } from '../api';
 
 const INITIAL_VISIBLE = 6;
-
-const COLLEGE_FILTERS = [
-  { id: '3', label: 'Arts & Sciences' },
-  { id: '1', label: 'Engineering & IT' },
-  { id: '4', label: 'Business School' },
-  { id: '2', label: 'Medicine & Health' },
-  { id: '5', label: 'Law & Policy' },
-];
 
 const DEGREE_FILTERS = [
   { id: 'B.Sc.', label: 'Bachelor of Science (B.Sc.)' },
@@ -17,35 +10,41 @@ const DEGREE_FILTERS = [
   { id: 'Associate', label: 'Associate Degree' },
 ];
 
-// All majors: collegeId matches COLLEGE_FILTERS, degreeType matches DEGREE_FILTERS
-const ALL_MAJORS = [
-  { id: 'eng-mis', name: 'Management Information Systems', degreeType: 'B.Sc.', collegeId: '1', collegeName: 'Engineering & IT', slug: 'management-information-systems', description: 'Bridging business strategy and information technology for modern organizations.' },
-  { id: 'eng-cs', name: 'Computer Science', degreeType: 'B.Sc.', collegeId: '1', collegeName: 'Engineering & IT', slug: 'computer-science', description: 'Study algorithms, software systems, and computational theory to solve complex problems.' },
-  { id: 'eng-ee', name: 'Electrical Engineering', degreeType: 'B.Sc.', collegeId: '1', collegeName: 'Engineering & IT', slug: 'electrical-engineering', description: 'Design and analyze electrical systems, from microelectronics to power grids.' },
-  { id: 'eng-ce', name: 'Civil Engineering', degreeType: 'B.Sc.', collegeId: '1', collegeName: 'Engineering & IT', slug: 'civil-engineering', description: 'Plan, design, and manage infrastructure that shapes our built environment.' },
-  { id: 'eng-me', name: 'Mechanical Engineering', degreeType: 'B.Sc.', collegeId: '1', collegeName: 'Engineering & IT', slug: 'mechanical-engineering', description: 'Apply principles of mechanics and thermodynamics to create machines and systems.' },
-  { id: 'eng-it', name: 'Information Technology', degreeType: 'B.Sc.', collegeId: '1', collegeName: 'Engineering & IT', slug: 'information-technology', description: 'Bridge business and technology with skills in systems, networks, and data.' },
-  { id: 'eng-se', name: 'Software Engineering', degreeType: 'B.Sc.', collegeId: '1', collegeName: 'Engineering & IT', slug: 'software-engineering', description: 'Build reliable, scalable software through systematic design and development.' },
-  { id: 'arts-econ', name: 'Economics', degreeType: 'B.A.', collegeId: '3', collegeName: 'Arts & Sciences', slug: 'economics', description: 'Understand markets, policy, and economic theory to analyze real-world issues.' },
-  { id: 'arts-psych', name: 'Psychology', degreeType: 'B.A.', collegeId: '3', collegeName: 'Arts & Sciences', slug: 'psychology', description: 'Study human behavior and mental processes through research and applied practice.' },
-  { id: 'arts-bio', name: 'Biology', degreeType: 'B.Sc.', collegeId: '3', collegeName: 'Arts & Sciences', slug: 'biology', description: 'Explore living systems from molecular mechanisms to ecosystems.' },
-  { id: 'bus-mgmt', name: 'Business Administration', degreeType: 'B.Sc.', collegeId: '4', collegeName: 'Business School', slug: 'business-administration', description: 'Prepare for leadership in management, strategy, and organizational development.' },
-  { id: 'med-nursing', name: 'Nursing', degreeType: 'B.Sc.', collegeId: '2', collegeName: 'Medicine & Health', slug: 'nursing', description: 'Train for clinical practice and patient care in diverse healthcare settings.' },
-  { id: 'law-legal', name: 'Law', degreeType: 'B.A.', collegeId: '5', collegeName: 'Law & Policy', slug: 'law', description: 'Develop legal reasoning and advocacy for practice or policy roles.' },
-];
-
-const TRENDING_MAJORS = [
-  { id: 'eng-cs', name: 'Computer Science' },
-  { id: 'arts-econ', name: 'Economics' },
-  { id: 'arts-psych', name: 'Psychology' },
-];
+function slugify(name) {
+  return (name || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+};
 
 const getMajorImage = (slug) => `/majors/${slug || 'placeholder'}.jpg`;
 
 function Majors() {
+  const [colleges, setColleges] = useState([]);
+  const [majors, setMajors] = useState([]);
   const [search, setSearch] = useState('');
   const [collegeIds, setCollegeIds] = useState([]);
   const [showMore, setShowMore] = useState(false);
+
+  useEffect(() => {
+    getColleges().then((list) => setColleges(Array.isArray(list) ? list : [])).catch(() => setColleges([]));
+  }, []);
+  useEffect(() => {
+    getMajors()
+      .then((list) => setMajors(Array.isArray(list) ? list : []))
+      .catch(() => setMajors([]));
+  }, []);
+
+  const collegeFilters = useMemo(() => colleges.map((c) => ({ id: c.id, label: c.name })), [colleges]);
+
+  const majorsWithMeta = useMemo(
+    () =>
+      majors.map((m) => ({
+        ...m,
+        collegeName: colleges.find((c) => String(c.id) === String(m.collegeId))?.name || '',
+        slug: slugify(m.name),
+        degreeType: 'B.Sc.',
+        description: '',
+      })),
+    [majors, colleges]
+  );
 
   const toggleCollege = (id) => {
     setCollegeIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -53,17 +52,16 @@ function Majors() {
 
   const filteredMajors = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const list = ALL_MAJORS.filter((m) => {
+    return majorsWithMeta.filter((m) => {
       const matchSearch =
         !query ||
         [m.name, m.collegeName, m.description, m.slug, m.degreeType]
           .filter(Boolean)
           .some((s) => String(s).toLowerCase().includes(query));
-      const matchCollege = collegeIds.length === 0 || collegeIds.includes(m.collegeId);
+      const matchCollege = collegeIds.length === 0 || collegeIds.includes(String(m.collegeId));
       return matchSearch && matchCollege;
     });
-    return list;
-  }, [search, collegeIds]);
+  }, [majorsWithMeta, search, collegeIds]);
 
   const visibleMajors = showMore ? filteredMajors : filteredMajors.slice(0, INITIAL_VISIBLE);
   const hasMore = filteredMajors.length > INITIAL_VISIBLE;
@@ -110,7 +108,7 @@ function Majors() {
                 Filter by College
               </h3>
               <ul className="space-y-2">
-                {COLLEGE_FILTERS.map((c) => (
+                {collegeFilters.map((c) => (
                   <li key={c.id} className="flex items-center gap-2">
                     <input
                       type="checkbox"

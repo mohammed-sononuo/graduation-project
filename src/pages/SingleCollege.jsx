@@ -1,42 +1,53 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { getColleges, getMajors } from '../api';
 
 const INITIAL_MAJORS_COUNT = 6;
 
-// Image paths: place files in public/majors/ (e.g. computer-science.jpg)
 const getMajorImage = (slug) => `/majors/${slug || 'placeholder'}.jpg`;
 
-// College of Engineering — full detail (id "1")
-const COLLEGE_ENGINEERING = {
-  id: '1',
-  shortName: 'Engineering & IT',
-  name: 'College of Engineering & Information Technology',
-  tagline: 'EXCELLENCE IN TECHNOLOGY',
-  description: 'Empowering the next generation of innovators through rigorous academic programs, world-class research facilities, and industry-leading faculty expertise.',
-  badges: [
-    { label: 'ABET Accredited', icon: 'check' },
-    { label: '4,500+ Students', icon: 'users' },
-  ],
-  majors: [
-    { id: 'eng-mis', slug: 'management-information-systems', name: 'Management Information Systems (MIS)', credits: 150, description: 'Bridging business strategy and information technology for modern organizations.' },
-    { id: 'eng-cs', slug: 'computer-science', name: 'Computer Science', credits: 150, description: 'Study algorithms, software systems, and computational theory to solve complex problems.' },
-    { id: 'eng-ee', slug: 'electrical-engineering', name: 'Electrical Engineering', credits: 158, description: 'Design and analyze electrical systems, from microelectronics to power grids.' },
-    { id: 'eng-ce', slug: 'civil-engineering', name: 'Civil Engineering', credits: 155, description: 'Plan, design, and manage infrastructure that shapes our built environment.' },
-    { id: 'eng-me', slug: 'mechanical-engineering', name: 'Mechanical Engineering', credits: 160, description: 'Apply principles of mechanics and thermodynamics to create machines and systems.' },
-    { id: 'eng-it', slug: 'information-technology', name: 'Information Technology', credits: 148, description: 'Bridge business and technology with skills in systems, networks, and data.' },
-    { id: 'eng-se', slug: 'software-engineering', name: 'Software Engineering', credits: 152, description: 'Build reliable, scalable software through systematic design and development.' },
-    { id: 'eng-che', slug: 'chemical-engineering', name: 'Chemical Engineering', credits: 162, description: 'Apply chemistry and engineering to design processes and products at scale.' },
-    { id: 'eng-bme', slug: 'biomedical-engineering', name: 'Biomedical Engineering', credits: 156, description: 'Combine engineering and life sciences to advance healthcare and medical devices.' },
-  ],
-};
-
-const COLLEGES_MAP = {
-  '1': COLLEGE_ENGINEERING,
-};
+function slugify(name) {
+  return (name || '').toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+}
 
 function SingleCollege() {
   const { id } = useParams();
-  const college = COLLEGES_MAP[id];
+  const [college, setCollege] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!id) {
+      setCollege(null);
+      setLoading(false);
+      return;
+    }
+    Promise.all([getColleges(), getMajors(id)])
+      .then(([collegesList, majorsList]) => {
+        const c = (Array.isArray(collegesList) ? collegesList : []).find((x) => String(x.id) === String(id));
+        if (!c) {
+          setCollege(null);
+          return;
+        }
+        const majors = (Array.isArray(majorsList) ? majorsList : []).map((m) => ({
+          id: m.id,
+          slug: slugify(m.name),
+          name: m.name,
+          credits: 120,
+          description: '',
+        }));
+        setCollege({
+          id: c.id,
+          shortName: c.name,
+          name: c.name,
+          tagline: 'EXCELLENCE IN EDUCATION',
+          description: 'Dedicated to excellence in teaching, research, and innovation.',
+          badges: [],
+          majors,
+        });
+      })
+      .catch(() => setCollege(null))
+      .finally(() => setLoading(false));
+  }, [id]);
 
   const [sortOrder, setSortOrder] = useState('asc'); // 'asc' | 'desc' (name A→Z / Z→A)
   const [showMoreMajors, setShowMoreMajors] = useState(false);
@@ -54,7 +65,13 @@ function SingleCollege() {
   const visibleMajors = showMoreMajors ? sortedMajors : sortedMajors.slice(0, INITIAL_MAJORS_COUNT);
   const hasMoreMajors = sortedMajors.length > INITIAL_MAJORS_COUNT;
 
-  // Only College of Engineering (id 1) has the full page; others redirect or show coming soon
+  if (loading) {
+    return (
+      <div className="bg-[#f7f6f3] min-h-[50vh] flex items-center justify-center">
+        <p className="text-slate-500">Loading…</p>
+      </div>
+    );
+  }
   if (!college) {
     return (
       <div className="bg-[#f7f6f3] min-h-[50vh] flex items-center justify-center">

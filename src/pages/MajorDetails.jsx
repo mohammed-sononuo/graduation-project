@@ -1,65 +1,7 @@
-import { useEffect } from 'react';
-import { Link, useParams, useLocation } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
+import { apiUrl } from '../api';
 import MajorChat from '../components/MajorChat';
-
-// Full details per major (for major detail page)
-const MAJORS_DETAILS = {
-  'eng-mis': {
-    id: 'eng-mis',
-    name: 'Management Information Systems (MIS)',
-    shortName: 'MIS',
-    department: 'Department of Information Systems',
-    collegeId: '1',
-    collegeName: 'College of Engineering & Information Technology',
-    collegeShortName: 'Engineering & IT',
-    tagline: 'Bridging business strategy and information technology',
-    requiredGpa: '80%',
-    highSchoolTrack: 'Scientific, Lit, Comm',
-    degreeType: 'B.Sc',
-    studyDuration: '4 Years',
-    aboutText: 'The Management Information Systems (MIS) program prepares students to design, implement, and manage information systems that support organizational goals. You will learn to analyze business needs, evaluate technology solutions, and lead digital transformation projects. The curriculum combines core business knowledge with technical skills in databases, systems analysis, and enterprise applications, preparing graduates for roles such as systems analyst, IT consultant, business analyst, and project manager.',
-  },
-  'eng-cs': {
-    id: 'eng-cs',
-    name: 'Computer Science',
-    shortName: 'Computer Science',
-    department: 'Department of Computer Science',
-    collegeId: '1',
-    collegeName: 'College of Engineering & Information Technology',
-    collegeShortName: 'Engineering & IT',
-    tagline: 'Algorithms, software systems, and computational theory',
-    requiredGpa: '85%',
-    highSchoolTrack: 'Scientific',
-    degreeType: 'B.Sc',
-    studyDuration: '4 Years',
-    aboutText: 'The Computer Science program provides a strong foundation in algorithms, programming, data structures, and software engineering. Students learn to solve complex problems and build reliable software systems for industry and research.',
-  },
-  'eng-it': {
-    id: 'eng-it',
-    name: 'Information Technology',
-    shortName: 'Information Technology',
-    department: 'Department of Information Technology',
-    collegeId: '1',
-    collegeName: 'College of Engineering & Information Technology',
-    collegeShortName: 'Engineering & IT',
-    tagline: 'Systems, networks, and data in business and technology',
-    requiredGpa: '78%',
-    highSchoolTrack: 'Scientific, Lit, Comm',
-    degreeType: 'B.Sc',
-    studyDuration: '4 Years',
-    aboutText: 'The Information Technology program bridges business and technology, focusing on systems administration, networking, databases, and application development to support organizational needs.',
-  },
-  'eng-ee': { id: 'eng-ee', name: 'Electrical Engineering', shortName: 'Electrical Engineering', department: 'Department of Electrical Engineering', collegeId: '1', collegeName: 'College of Engineering & Information Technology', collegeShortName: 'Engineering & IT', tagline: 'Design and analyze electrical systems', requiredGpa: '85%', highSchoolTrack: 'Scientific', degreeType: 'B.Sc', studyDuration: '4 Years', aboutText: 'The Electrical Engineering program covers microelectronics, power systems, and signal processing, preparing graduates for roles in industry and research.' },
-  'eng-ce': { id: 'eng-ce', name: 'Civil Engineering', shortName: 'Civil Engineering', department: 'Department of Civil Engineering', collegeId: '1', collegeName: 'College of Engineering & Information Technology', collegeShortName: 'Engineering & IT', tagline: 'Infrastructure and the built environment', requiredGpa: '82%', highSchoolTrack: 'Scientific', degreeType: 'B.Sc', studyDuration: '4 Years', aboutText: 'Civil Engineering focuses on planning, design, and management of infrastructure including buildings, roads, and water systems.' },
-  'eng-me': { id: 'eng-me', name: 'Mechanical Engineering', shortName: 'Mechanical Engineering', department: 'Department of Mechanical Engineering', collegeId: '1', collegeName: 'College of Engineering & Information Technology', collegeShortName: 'Engineering & IT', tagline: 'Machines, systems, and thermodynamics', requiredGpa: '83%', highSchoolTrack: 'Scientific', degreeType: 'B.Sc', studyDuration: '4 Years', aboutText: 'Mechanical Engineering applies principles of mechanics and thermodynamics to design and analyze machines and systems.' },
-  'eng-se': { id: 'eng-se', name: 'Software Engineering', shortName: 'Software Engineering', department: 'Department of Computer Science', collegeId: '1', collegeName: 'College of Engineering & Information Technology', collegeShortName: 'Engineering & IT', tagline: 'Reliable, scalable software systems', requiredGpa: '84%', highSchoolTrack: 'Scientific', degreeType: 'B.Sc', studyDuration: '4 Years', aboutText: 'Software Engineering emphasizes systematic design, development, and maintenance of high-quality software.' },
-  'arts-econ': { id: 'arts-econ', name: 'Economics', shortName: 'Economics', department: 'Department of Economics', collegeId: '3', collegeName: 'College of Arts & Sciences', collegeShortName: 'Arts & Sciences', tagline: 'Markets, policy, and economic theory', requiredGpa: '78%', highSchoolTrack: 'Scientific, Lit, Comm', degreeType: 'B.A.', studyDuration: '4 Years', aboutText: 'The Economics program explores markets, policy, and economic theory to analyze real-world issues and prepare for careers in analysis, finance, and policy.' },
-  'arts-psych': { id: 'arts-psych', name: 'Psychology', shortName: 'Psychology', department: 'Department of Psychology', collegeId: '3', collegeName: 'College of Arts & Sciences', collegeShortName: 'Arts & Sciences', tagline: 'Human behavior and mental processes', requiredGpa: '77%', highSchoolTrack: 'Scientific, Lit, Comm', degreeType: 'B.A.', studyDuration: '4 Years', aboutText: 'Psychology combines research and applied practice to study human behavior and mental processes.' },
-  'arts-bio': { id: 'arts-bio', name: 'Biology', shortName: 'Biology', department: 'Department of Biology', collegeId: '3', collegeName: 'College of Arts & Sciences', collegeShortName: 'Arts & Sciences', tagline: 'Living systems from molecules to ecosystems', requiredGpa: '80%', highSchoolTrack: 'Scientific', degreeType: 'B.Sc', studyDuration: '4 Years', aboutText: 'Biology explores living systems from molecular mechanisms to ecosystems, with opportunities for lab and field work.' },
-  'bus-mgmt': { id: 'bus-mgmt', name: 'Business Administration', shortName: 'Business Administration', department: 'Department of Business Administration', collegeId: '4', collegeName: 'College of Business & Economics', collegeShortName: 'Business School', tagline: 'Leadership in management and strategy', requiredGpa: '76%', highSchoolTrack: 'Scientific, Lit, Comm', degreeType: 'B.Sc', studyDuration: '4 Years', aboutText: 'Business Administration prepares students for leadership in management, strategy, and organizational development.' },
-  'med-nursing': { id: 'med-nursing', name: 'Nursing', shortName: 'Nursing', department: 'Department of Nursing', collegeId: '2', collegeName: 'College of Medicine & Health', collegeShortName: 'Medicine & Health', tagline: 'Clinical practice and patient care', requiredGpa: '82%', highSchoolTrack: 'Scientific', degreeType: 'B.Sc', studyDuration: '4 Years', aboutText: 'Nursing trains students for clinical practice and patient care in diverse healthcare settings.' },
-  'law-legal': { id: 'law-legal', name: 'Law', shortName: 'Law', department: 'Department of Law', collegeId: '5', collegeName: 'College of Law & Policy', collegeShortName: 'Law & Policy', tagline: 'Legal reasoning and advocacy', requiredGpa: '79%', highSchoolTrack: 'Lit, Comm', degreeType: 'B.A.', studyDuration: '4 Years', aboutText: 'Law develops legal reasoning and advocacy skills for practice or policy roles.' },
-};
 
 const INFO_CARD_ICONS = {
   gpa: (
@@ -87,20 +29,41 @@ const INFO_CARD_ICONS = {
 
 function MajorDetails() {
   const { id } = useParams();
-  const location = useLocation();
-  const major = MAJORS_DETAILS[id];
-  const fromMajors = location.state?.from === 'majors';
+  const [major, setMajor] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  // Scroll to top when navigating to this major page (fixes content appearing at bottom)
   useEffect(() => {
     window.scrollTo(0, 0);
   }, [id]);
 
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetch(apiUrl(`/api/programs/${id}`))
+      .then((res) => {
+        if (!res.ok) throw new Error('Not found');
+        return res.json();
+      })
+      .then((data) => {
+        if (!cancelled) setMajor(data);
+      })
+      .catch(() => { if (!cancelled) setMajor(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="bg-[#f7f6f3] min-h-[50vh] flex items-center justify-center">
+        <p className="text-slate-600">Loading program…</p>
+      </div>
+    );
+  }
   if (!major) {
     return (
       <div className="bg-[#f7f6f3] min-h-[50vh] flex items-center justify-center">
         <div className="max-w-screen-2xl mx-auto px-6 lg:px-10 text-center">
-          <h1 className="font-serif text-2xl text-[#0b2d52] mb-4">Major not found</h1>
+          <h1 className="font-serif text-2xl text-[#0b2d52] mb-4">Program not found</h1>
           <Link to="/colleges" className="text-[#00356b] font-semibold hover:underline">
             ← Back to Colleges
           </Link>
@@ -110,86 +73,87 @@ function MajorDetails() {
   }
 
   const infoCards = [
-    { key: 'gpa', label: 'Required GPA', value: major.requiredGpa },
-    { key: 'track', label: 'High School Track', value: major.highSchoolTrack },
-    { key: 'degree', label: 'Degree Type', value: major.degreeType },
-    { key: 'duration', label: 'Study Duration', value: major.studyDuration },
-  ];
+    { key: 'gpa', label: 'Required GPA', value: major.required_gpa },
+    { key: 'track', label: 'High School Track', value: major.high_school_track },
+    { key: 'degree', label: 'Degree Type', value: major.degree_type },
+    { key: 'duration', label: 'Study Duration', value: major.duration },
+  ].filter((c) => c.value);
+
+  const tagline = major.description || major.about_text;
 
   return (
     <div className="text-gray-900 bg-white min-h-screen">
       <div className="max-w-screen-2xl mx-auto px-6 lg:px-10 pt-8 pb-20">
-        {/* Breadcrumb — from Majors: Majors → name; from College: Colleges → college → name */}
         <nav className="flex items-center gap-2 text-sm mb-8" aria-label="Breadcrumb">
-          {fromMajors ? (
-            <>
-              <Link to="/majors" className="text-slate-500 hover:text-[#00356b] hover:underline transition">
-                Majors
-              </Link>
-              <span className="text-slate-300" aria-hidden>›</span>
-              <span className="font-semibold text-[#00356b]">{major.shortName}</span>
-            </>
-          ) : (
-            <>
-              <Link to="/colleges" className="text-slate-500 hover:text-[#00356b] hover:underline transition">
-                Colleges
-              </Link>
-              <span className="text-slate-300" aria-hidden>›</span>
-              <Link to={`/colleges/${major.collegeId}`} className="text-slate-500 hover:text-[#00356b] hover:underline transition">
-                {major.collegeShortName}
-              </Link>
-              <span className="text-slate-300" aria-hidden>›</span>
-              <span className="font-semibold text-[#00356b]">{major.shortName}</span>
-            </>
-          )}
+          <Link to="/colleges" className="text-slate-500 hover:text-[#00356b] hover:underline transition">
+            Colleges
+          </Link>
+          <span className="text-slate-300" aria-hidden>›</span>
+          <Link to={`/colleges/${major.college_id}`} className="text-slate-500 hover:text-[#00356b] hover:underline transition">
+            {major.college_short_name}
+          </Link>
+          <span className="text-slate-300" aria-hidden>›</span>
+          <span className="font-semibold text-[#00356b]">{major.name}</span>
         </nav>
 
-        {/* Title block — department, major name, subtitle */}
+        {major.image_url && (
+          <div className="rounded-xl overflow-hidden bg-slate-100 mb-10 h-48 md:h-64">
+            <img src={major.image_url} alt="" className="w-full h-full object-cover" />
+          </div>
+        )}
         <div className="text-center mb-12">
-          <p className="text-xs font-semibold text-[#00356b]/80 uppercase tracking-widest mb-2">
-            {major.department}
-          </p>
+          {major.department && (
+            <p className="text-xs font-semibold text-[#00356b]/80 uppercase tracking-widest mb-2">
+              {major.department}
+            </p>
+          )}
           <h1 className="font-serif text-3xl md:text-4xl lg:text-5xl font-semibold text-[#0b2d52] leading-tight tracking-tight mb-4">
             {major.name}
           </h1>
           <div className="flex flex-wrap items-center justify-center gap-2 text-slate-600 text-sm">
-            <span>{major.collegeName}</span>
-            <span className="text-slate-300" aria-hidden>|</span>
-            <span>{major.tagline}</span>
+            <span>{major.college_name}</span>
+            {tagline && (
+              <>
+                <span className="text-slate-300" aria-hidden>|</span>
+                <span>{tagline}</span>
+              </>
+            )}
           </div>
         </div>
 
-        {/* Key info cards — 4 cards, responsive grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-14">
-          {infoCards.map(({ key, label, value }) => (
-            <div
-              key={key}
-              className="bg-white border border-slate-100 rounded-lg shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 p-5 text-center"
-            >
-              <div className="flex justify-center mb-3">
-                {INFO_CARD_ICONS[key]}
+        {infoCards.length > 0 && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-14">
+            {infoCards.map(({ key, label, value }) => (
+              <div
+                key={key}
+                className="bg-white border border-slate-100 rounded-lg shadow-sm hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200 p-5 text-center"
+              >
+                <div className="flex justify-center mb-3">
+                  {INFO_CARD_ICONS[key]}
+                </div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                  {label}
+                </p>
+                <p className="font-serif text-lg font-semibold text-[#0b2d52]">
+                  {value}
+                </p>
               </div>
-              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
-                {label}
-              </p>
-              <p className="font-serif text-lg font-semibold text-[#0b2d52]">
-                {value}
-              </p>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
 
-        {/* About the Major */}
-        <section className="mb-14">
-          <h2 className="font-serif text-2xl font-semibold text-[#0b2d52] text-center mb-6">
-            About the Major
-          </h2>
-          <p className="text-slate-600 leading-relaxed text-center max-w-3xl mx-auto">
-            {major.aboutText}
-          </p>
-        </section>
+        {(major.about_text || major.description) && (
+          <section className="mb-14">
+            <h2 className="font-serif text-2xl font-semibold text-[#0b2d52] text-center mb-6">
+              About the Major
+            </h2>
+            <p className="text-slate-600 leading-relaxed text-center max-w-3xl mx-auto">
+              {major.about_text || major.description}
+            </p>
+          </section>
+        )}
 
-        <MajorChat majorName={major.name} majorShortName={major.shortName} />
+        <MajorChat majorName={major.name} majorShortName={major.name} />
       </div>
     </div>
   );
