@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
-import { MANAGED_EVENTS_KEY } from '../data/managedEvents';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { isAdmin } from '../utils/permissions';
+import { getAdminEvents, createEvent, updateEvent, deleteEvent } from '../api';
 import SmallApprovalStepper from '../components/SmallApprovalStepper';
 
-const STORAGE_KEY = MANAGED_EVENTS_KEY;
 const HERO_BG = '/manage-events-hero.png';
 
 const STATUS_LABELS = {
@@ -22,23 +23,6 @@ const STATUS_STYLES = {
   rejected: 'bg-red-100 text-red-800',
 };
 
-function loadManagedEvents() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveManagedEvents(events) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
-  } catch (e) {
-    console.warn('Failed to save managed events', e);
-  }
-}
-
 function formatDisplayDate(dateStr) {
   if (!dateStr) return 'Not scheduled';
   const d = new Date(dateStr);
@@ -50,7 +34,7 @@ function formatDisplayTime(timeStr) {
   return timeStr;
 }
 
-function EventCard({ ev, selectedId, setSelectedId, setShowForm, persist, events, onShowFeedback }) {
+function EventCard({ ev, selectedId, setSelectedId, setShowForm, onDelete, events, onShowFeedback }) {
   return (
     <div
       className={`rounded-2xl border overflow-hidden bg-white shadow-sm transition-all duration-200 min-w-0 ${
@@ -111,7 +95,7 @@ function EventCard({ ev, selectedId, setSelectedId, setShowForm, persist, events
                 type="button"
                 onClick={() => {
                   if (window.confirm('Delete this event?')) {
-                    persist(events.filter((e) => e.id !== ev.id));
+                    onDelete?.(ev);
                     if (selectedId === ev.id) setSelectedId(null);
                   }
                 }}
@@ -126,7 +110,7 @@ function EventCard({ ev, selectedId, setSelectedId, setShowForm, persist, events
               type="button"
               onClick={() => {
                 if (window.confirm('Remove this rejected event from the list?')) {
-                  persist(events.filter((e) => e.id !== ev.id));
+                  onDelete?.(ev);
                   if (selectedId === ev.id) setSelectedId(null);
                 }
               }}
@@ -142,7 +126,7 @@ function EventCard({ ev, selectedId, setSelectedId, setShowForm, persist, events
 }
 
 function ManageEvents() {
-  const [user, setUser] = useState(null);
+  const navigate = useNavigate();
   const [events, setEvents] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [feedbackEvent, setFeedbackEvent] = useState(null);
@@ -163,27 +147,34 @@ function ManageEvents() {
   });
   const [formErrors, setFormErrors] = useState({});
   const [showForm, setShowForm] = useState(false);
-  const [accessAllowed, setAccessAllowed] = useState(null);
+  const { user, loading } = useAuth();
+  const accessAllowed = isAdmin(user);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('user');
-      const u = stored ? JSON.parse(stored) : null;
-      setUser(u);
-      setAccessAllowed(Boolean(u && u.role === 'admin'));
-    } catch {
-      setAccessAllowed(false);
-    }
+    if (!loading && !user) navigate('/login', { replace: true });
+  }, [user, loading, navigate]);
+
+  const loadEvents = useCallback(() => {
+    getAdminEvents()
+      .then((list) => setEvents(Array.isArray(list) ? list : []))
+      .catch(() => setEvents([]));
   }, []);
+
+  const handleDelete = useCallback(
+    (ev) => {
+      deleteEvent(ev.id)
+        .then(() => {
+          loadEvents();
+          if (selectedId === ev.id) setSelectedId(null);
+        })
+        .catch((err) => console.warn('Delete failed', err));
+    },
+    [loadEvents, selectedId]
+  );
 
   useEffect(() => {
-    setEvents(loadManagedEvents());
-  }, []);
-
-  const persist = useCallback((nextEvents) => {
-    setEvents(nextEvents);
-    saveManagedEvents(nextEvents);
-  }, []);
+    if (isAdmin(user)) loadEvents();
+  }, [user, loadEvents]);
 
   useEffect(() => {
     const ev = selectedId ? events.find((e) => e.id === selectedId) : null;
@@ -223,7 +214,7 @@ function ManageEvents() {
     }
   }, [selectedId, events]);
 
-  if (accessAllowed === null) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f7f6f3]">
         <p className="text-slate-500">Loading…</p>
@@ -268,7 +259,7 @@ function ManageEvents() {
     return Object.keys(err).length === 0;
   };
 
-  const handleSubmitForApproval = (e) => {
+  const handleSubmitForApproval = async (e) => {
     e.preventDefault();
     if (!validate()) return;
     const payload = {
@@ -276,14 +267,14 @@ function ManageEvents() {
       title: form.title.trim(),
       clubName: form.clubName.trim() || 'University',
       description: form.description.trim(),
-      startDate: form.startDate.trim(),
-      startTime: form.startTime.trim(),
-      endDate: form.endDate.trim(),
-      endTime: form.endTime.trim(),
+      startDate: form.startDate.trim() || null,
+      startTime: form.startTime.trim() || null,
+      endDate: form.endDate.trim() || null,
+      endTime: form.endTime.trim() || null,
       location: form.location.trim(),
       availableSeats: Number(form.availableSeats) || 0,
       price: Number(form.price) || 0,
-      priceMember: form.priceMember !== '' ? Number(form.priceMember) : undefined,
+      priceMember: form.priceMember !== '' ? Number(form.priceMember) : null,
       customSections: (form.customSections || []).map((s) => ({
         id: s.id || `sec-${Date.now()}-${Math.random().toString(36).slice(2)}`,
         sectionTitle: s.sectionTitle || '',
@@ -294,16 +285,20 @@ function ManageEvents() {
       image: (form.image || '').trim() || '/event1.jpg',
       category: selectedEvent?.category || 'Event',
     };
-    const next = selectedEvent
-      ? events.map((ev) => (ev.id === selectedEvent.id ? payload : ev))
-      : [...events, payload];
-    persist(next);
-    setFormErrors({});
-    if (selectedEvent) {
-      setSelectedId(payload.id);
-    } else {
-      handleAddNewEvent();
+    try {
+      if (selectedEvent) {
+        await updateEvent(selectedEvent.id, payload);
+        setSelectedId(payload.id);
+      } else {
+        const created = await createEvent(payload);
+        setSelectedId(created?.id || payload.id);
+      }
+      loadEvents();
+    } catch (err) {
+      console.warn('Save event failed', err);
+      setFormErrors({ submit: err.data?.error || 'Failed to save event' });
     }
+    setFormErrors((prev) => ({ ...prev, submit: undefined }));
   };
 
   const handleAddNewEvent = () => {
@@ -626,7 +621,7 @@ function ManageEvents() {
                     selectedId={selectedId}
                     setSelectedId={setSelectedId}
                     setShowForm={setShowForm}
-                    persist={persist}
+                    onDelete={handleDelete}
                     events={events}
                     onShowFeedback={setFeedbackEvent}
                   />

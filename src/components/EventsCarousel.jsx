@@ -2,54 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import useEmblaCarousel from 'embla-carousel-react';
 import Autoplay from 'embla-carousel-autoplay';
+import { getEvents } from '../api';
 
-const EVENTS = [
-  {
-    id: '1',
-    title: 'Global Research Symposium: Innovation in Tech',
-    date: 'October 24, 2023',
-    time: '10:00 AM',
-    location: 'Main Auditorium, New Campus',
-    description: 'A gathering of leading researchers and academics to explore cutting-edge developments in technology and their impact on society.',
-    image: '/event1.jpg',
-  },
-  {
-    id: '2',
-    title: 'Fall Open House for Prospective Graduate Students',
-    date: 'November 02, 2023',
-    time: '2:00 PM',
-    location: 'Faculty of Graduate Studies',
-    description: 'An opportunity for prospective students to tour the campus, meet faculty, and learn about our graduate programs.',
-    image: '/event2.jpg',
-  },
-  {
-    id: '3',
-    title: 'International Cultural Exchange Night 2023',
-    date: 'November 15, 2023',
-    time: '6:00 PM',
-    location: 'Student Activity Center',
-    description: 'Celebrate the rich diversity of our campus community through food, music, and cultural performances from around the world.',
-    image: '/event3.jpg',
-  },
-  {
-    id: '4',
-    title: 'Campus Sustainability Forum',
-    date: 'December 05, 2023',
-    time: '9:00 AM',
-    location: 'Engineering Hall, Room 201',
-    description: 'Discussions and workshops focused on sustainable practices, green energy initiatives, and the university\'s environmental commitments.',
-    image: '/event4.jpg',
-  },
-  {
-    id: '5',
-    title: 'Annual Science & Engineering Fair',
-    date: 'December 18, 2023',
-    time: '10:00 AM',
-    location: 'Engineering Building, Exhibition Hall',
-    description: 'Showcase of student projects and research in science and engineering. Open to the public and industry partners.',
-    image: '/event1.jpg',
-  },
-];
+const CAROUSEL_MAX = 6;
+
+function formatEventDate(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
 
 function EventCard({ event }) {
   return (
@@ -115,9 +76,29 @@ function EventCard({ event }) {
 }
 
 export default function EventsCarousel() {
+  const [events, setEvents] = useState([]);
+
+  useEffect(() => {
+    getEvents()
+      .then((list) => {
+        const raw = Array.isArray(list) ? list : [];
+        const mapped = raw.slice(0, CAROUSEL_MAX).map((e) => ({
+          id: e.id,
+          title: e.title || '',
+          date: formatEventDate(e.startDate),
+          time: e.startTime || '',
+          location: e.location || '',
+          description: e.description || '',
+          image: e.image || '/event1.jpg',
+        }));
+        setEvents(mapped);
+      })
+      .catch(() => setEvents([]));
+  }, []);
+
   const [emblaRef, emblaApi] = useEmblaCarousel(
     {
-      loop: true,
+      loop: events.length > 1,
       align: 'start',
       duration: 25,
       skipSnaps: false,
@@ -168,7 +149,7 @@ export default function EventsCarousel() {
           className="flex touch-pan-y gap-4"
           style={{ backfaceVisibility: 'hidden' }}
         >
-          {EVENTS.map((event) => (
+          {events.map((event) => (
             <div
               key={event.id}
               className="embla__slide min-w-0 flex-[0_0_100%] sm:flex-[0_0_calc((100%-1rem)/2)] lg:flex-[0_0_calc((100%-2rem)/3)]"
@@ -223,7 +204,7 @@ export default function EventsCarousel() {
         role="tablist"
         aria-label="Event carousel pagination"
       >
-        {EVENTS.map((_, index) => (
+        {events.map((_, index) => (
           <button
             key={index}
             type="button"

@@ -1,26 +1,19 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import EventsCarousel from '../components/EventsCarousel';
+import { useAuth } from '../context/AuthContext';
+import { isAdmin } from '../utils/permissions';
 
 const HERO_IMAGE = '/hero-campus.png';
 
 function Home() {
   const location = useLocation();
-  const [user, setUser] = useState(null);
+  const { user } = useAuth();
   const [dismissWelcome, setDismissWelcome] = useState(false);
   const [welcomeExiting, setWelcomeExiting] = useState(false);
 
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem('user');
-      setUser(stored ? JSON.parse(stored) : null);
-    } catch {
-      setUser(null);
-    }
-  }, [location.pathname]);
-
   const fromLogin = Boolean(location.state?.fromLogin) && !dismissWelcome;
-  const isStudent = user && user.role !== 'admin';
+  const isStudent = user && !isAdmin(user);
   const showWelcomeMessage = (fromLogin && isStudent) || welcomeExiting;
   const welcomeExitingActive = welcomeExiting;
 

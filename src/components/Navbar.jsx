@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { isAdmin, isDean, isSupervisor, isCommunityLeader, isStudent, DEAN_DISPLAY_NAME, SUPERVISOR_DISPLAY_NAME, COMMUNITY_LEADER_DISPLAY_NAME, STUDENT_DISPLAY_NAME } from "../utils/permissions";
+import { getNotifications, markNotificationRead, createWelcomeNotification } from "../api";
 
 const centerLinks = [
   { to: "/", label: "Home", end: true },
@@ -7,27 +10,8 @@ const centerLinks = [
   { to: "/majors", label: "Majors" },
   { to: "/events", label: "Events" },
   { to: "/admin", label: "Admin Portal", adminOnly: true },
+  { to: "/communities", label: "Communities", communitiesOnly: true },
 ];
-
-const NOTIFICATIONS_KEY = "navbarNotifications";
-
-function loadNotifications() {
-  try {
-    const raw = localStorage.getItem(NOTIFICATIONS_KEY);
-    const data = raw ? JSON.parse(raw) : [];
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveNotifications(list) {
-  try {
-    localStorage.setItem(NOTIFICATIONS_KEY, JSON.stringify(list));
-  } catch {
-    // ignore
-  }
-}
 
 function LogoPlaceholder({ className = "" }) {
   return (
@@ -47,14 +31,14 @@ function LogoPlaceholder({ className = "" }) {
 function Navbar() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user, logout } = useAuth();
   const [logoError, setLogoError] = useState(false);
-  const [user, setUser] = useState(null);
   const [scrolled, setScrolled] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [open, setOpen] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [notificationOpen, setNotificationOpen] = useState(false);
-  const [notifications, setNotifications] = useState(loadNotifications);
+  const [notifications, setNotifications] = useState([]);
   const avatarRef = useRef(null);
   const notifRef = useRef(null);
 
@@ -65,21 +49,18 @@ function Navbar() {
   }, []);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("user");
-      setUser(stored ? JSON.parse(stored) : null);
-    } catch {
-      setUser(null);
+    if (!user) {
+      setNotifications([]);
+      return;
     }
-  }, [location.pathname]);
-
-  useEffect(() => {
-    const list = loadNotifications();
-    if (list.length === 0 && user) {
-      const welcome = [{ id: "welcome-1", title: "Welcome", message: "You are logged in to An-Najah National University.", read: false, createdAt: Date.now() }];
-      setNotifications(welcome);
-      saveNotifications(welcome);
-    }
+    getNotifications()
+      .then((list) => {
+        setNotifications(Array.isArray(list) ? list : []);
+        if (Array.isArray(list) && list.length === 0) {
+          createWelcomeNotification().then((n) => n && setNotifications((prev) => [n, ...prev])).catch(() => {});
+        }
+      })
+      .catch(() => setNotifications([]));
   }, [user?.id]);
 
   useEffect(() => {
@@ -107,23 +88,28 @@ function Navbar() {
   const unreadCount = notifications.filter((n) => !n.read).length;
 
   const markAllRead = () => {
-    const next = notifications.map((n) => ({ ...n, read: true }));
-    setNotifications(next);
-    saveNotifications(next);
+    const unread = notifications.filter((n) => !n.read);
+    unread.forEach((n) => markNotificationRead(n.id).catch(() => {}));
+    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
   };
 
   const handleLogout = () => {
     setShowLogoutConfirm(false);
     setOpen(false);
     setMenuOpen(false);
-    localStorage.removeItem("user");
-    setUser(null);
+    logout();
     navigate("/login", { replace: true });
   };
 
   const userInitial = user?.name?.[0]?.toUpperCase() || user?.email?.[0]?.toUpperCase() || "?";
-  const isAdmin = user?.role === "admin";
-  const visibleCenterLinks = centerLinks.filter((link) => !link.adminOnly || isAdmin);
+  const admin = isAdmin(user);
+  const dean = isDean(user);
+  const supervisor = isSupervisor(user);
+  const communityLeader = isCommunityLeader(user);
+  const roleLabel = admin ? "Administrator" : dean ? DEAN_DISPLAY_NAME : supervisor ? SUPERVISOR_DISPLAY_NAME : communityLeader ? COMMUNITY_LEADER_DISPLAY_NAME : isStudent(user) ? STUDENT_DISPLAY_NAME : null;
+  const visibleCenterLinks = centerLinks.filter(
+    (link) => (link.adminOnly && !admin) || (link.communitiesOnly && !admin && !dean && !supervisor) ? false : true
+  );
 
   const centerLinkClass = ({ isActive }) =>
     `relative text-sm font-medium tracking-wide transition-all duration-200 pb-1 group
@@ -326,7 +312,7 @@ function Navbar() {
                   aria-label="User menu"
                 >
                   <span>{userInitial}</span>
-                  {isAdmin && (
+                  {admin && (
                     <span
                       className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-green-500 border-2 border-white"
                       aria-hidden
@@ -341,13 +327,14 @@ function Navbar() {
                     <div className="px-4 py-3 flex items-center gap-3 border-b border-slate-100">
                       <div className="relative flex-shrink-0 h-10 w-10 rounded-full bg-blue-900 text-white font-semibold flex items-center justify-center text-sm">
                         <span>{userInitial}</span>
-                        {isAdmin && (
+                        {admin && (
                           <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-green-500 border-2 border-white" aria-hidden />
                         )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-semibold text-slate-900 truncate">{user?.name || 'User'}</p>
                         <p className="text-xs text-slate-500 truncate">{user?.email || ''}</p>
+                        {roleLabel && <p className="text-[10px] font-medium text-[#00356b] mt-0.5">{roleLabel}</p>}
                       </div>
                     </div>
                     <NavLink

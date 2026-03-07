@@ -4,19 +4,22 @@ import { GoogleOAuthProvider } from '@react-oauth/google'
 import './index.css'
 import App from './App.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
+import { AuthProvider } from './context/AuthContext.jsx'
 
 const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 
 const root = (
   <React.StrictMode>
     <ErrorBoundary>
-      {clientId ? (
-        <GoogleOAuthProvider clientId={clientId}>
+      <AuthProvider>
+        {clientId ? (
+          <GoogleOAuthProvider clientId={clientId}>
+            <App />
+          </GoogleOAuthProvider>
+        ) : (
           <App />
-        </GoogleOAuthProvider>
-      ) : (
-        <App />
-      )}
+        )}
+      </AuthProvider>
     </ErrorBoundary>
   </React.StrictMode>
 )

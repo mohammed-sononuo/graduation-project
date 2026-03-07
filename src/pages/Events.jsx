@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { EVENTS, EVENT_CATEGORIES, EVENT_ORGANIZERS } from '../data/events';
-import { getApprovedManagedEvents } from '../data/managedEvents';
+import { useAuth } from '../context/AuthContext';
+import { isAdmin, isDean, isSupervisor, isCommunityLeader, isStudent } from '../utils/permissions';
+import { getEvents } from '../api';
 
 const HERO_BG = '/events-hero.png';
 /** Max events shown before "Show more" */
@@ -98,24 +99,44 @@ function EventCard({ event }) {
   );
 }
 
+function mapEventFromApi(e) {
+  const start = e.startDate ? new Date(e.startDate) : null;
+  const dateStr = start && !isNaN(start.getTime())
+    ? start.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    : '';
+  return {
+    id: e.id,
+    title: e.title,
+    description: e.description || '',
+    category: e.category || 'Event',
+    date: dateStr,
+    time: e.startTime || '',
+    location: e.location || '',
+    image: e.image || '/event1.jpg',
+    status: e.status === 'approved' ? 'upcoming' : (e.status || 'upcoming'),
+    featured: Boolean(e.featured),
+    price: e.price,
+    priceMember: e.priceMember,
+    organizer: e.clubName || '',
+  };
+}
+
 function Events() {
   const location = useLocation();
-  const [user, setUser] = useState(null);
-  const [userChecked, setUserChecked] = useState(false);
+  const { user, loading } = useAuth();
+  const [eventsFromApi, setEventsFromApi] = useState([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('user');
-      setUser(stored ? JSON.parse(stored) : null);
-    } catch {
-      setUser(null);
-    }
-    setUserChecked(true);
-  }, [location.pathname]);
+    getEvents()
+      .then((list) => setEventsFromApi(Array.isArray(list) ? list.map(mapEventFromApi) : []))
+      .catch(() => setEventsFromApi([]))
+      .finally(() => setEventsLoading(false));
+  }, []);
 
-  const allEvents = useMemo(() => [...EVENTS, ...getApprovedManagedEvents()], []);
+  const allEvents = useMemo(() => eventsFromApi, [eventsFromApi]);
   const featured = allEvents.find((e) => e.featured) || allEvents[0];
-  const [tab, setTab] = useState('all'); // all | upcoming | past
+  const [tab, setTab] = useState('all');
   const [category, setCategory] = useState('All Categories');
   const [organizer, setOrganizer] = useState('All Organizers');
   const [showMore, setShowMore] = useState(false);
@@ -123,6 +144,15 @@ function Events() {
   const [welcomeExiting, setWelcomeExiting] = useState(false);
   const fromLogin = Boolean(location.state?.fromLogin) && !dismissWelcome;
   const showWelcomeMessage = fromLogin || welcomeExiting;
+
+  const eventCategories = useMemo(
+    () => ['All Categories', ...Array.from(new Set(allEvents.map((e) => e.category).filter(Boolean))).sort()],
+    [allEvents]
+  );
+  const eventOrganizers = useMemo(
+    () => ['All Organizers', ...Array.from(new Set(allEvents.map((e) => e.organizer).filter(Boolean))).sort()],
+    [allEvents]
+  );
 
   const startWelcomeExit = () => {
     if (welcomeExiting) return;
@@ -149,7 +179,7 @@ function Events() {
       const matchOrganizer = organizer === 'All Organizers' ? true : (e.organizer || '') === organizer;
       return matchTab && matchCategory && matchOrganizer;
     });
-  }, [tab, category, organizer]);
+  }, [allEvents, tab, category, organizer]);
 
   const visibleEvents = showMore ? filtered : filtered.slice(0, INITIAL_EVENTS_COUNT);
   const hasMore = filtered.length > INITIAL_EVENTS_COUNT;
@@ -158,7 +188,7 @@ function Events() {
     setShowMore(false);
   }, [tab, category, organizer]);
 
-  if (!userChecked) {
+  if (loading || eventsLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f7f6f3]">
         <p className="text-slate-500">Loading…</p>
@@ -183,7 +213,7 @@ function Events() {
     );
   }
 
-  const welcomeText = user?.role === 'admin' ? 'Welcome, Admin' : `Welcome, ${user?.name || user?.email || 'User'}`;
+  const welcomeText = isAdmin(user) ? 'Welcome, Admin' : isDean(user) ? 'Welcome, Dean' : isSupervisor(user) ? 'Welcome, Supervisor' : isCommunityLeader(user) ? 'Welcome, Community Leader' : isStudent(user) ? 'Welcome, Student' : `Welcome, ${user?.name || user?.email || 'User'}`;
 
   return (
     <div className="min-h-screen bg-[#f7f6f3] text-slate-900">
@@ -343,7 +373,7 @@ function Events() {
               onChange={(e) => setCategory(e.target.value)}
               className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#00356b]/20"
             >
-              {EVENT_CATEGORIES.map((c) => (
+              {eventCategories.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
@@ -358,7 +388,7 @@ function Events() {
               onChange={(e) => setOrganizer(e.target.value)}
               className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-[#00356b]/20"
             >
-              {EVENT_ORGANIZERS.map((o) => (
+              {eventOrganizers.map((o) => (
                 <option key={o} value={o}>
                   {o}
                 </option>

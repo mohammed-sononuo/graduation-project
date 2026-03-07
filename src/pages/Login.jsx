@@ -2,6 +2,9 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useGoogleLogin } from "@react-oauth/google";
 import { apiUrl } from "../api";
+import { useAuth } from "../context/AuthContext";
+import { isEmailAllowed, getEmailRuleMessage, getAllowedDomains } from "../../config/rules.js";
+import { isAdmin, isDean, isSupervisor, isCommunityLeader } from "../utils/permissions";
 
 function GoogleGIcon() {
   return (
@@ -45,16 +48,9 @@ function GoogleSignInButton({ onSuccess, onError, disabled }) {
   );
 }
 
-const ALLOWED_DOMAINS = ["@stu.najah.edu", "@najah.edu"];
-
-function isValidNajahEmail(email) {
-  if (!email || typeof email !== "string") return false;
-  const normalized = email.trim().toLowerCase();
-  return ALLOWED_DOMAINS.some((d) => normalized.endsWith(d.toLowerCase()));
-}
-
 function Login() {
   const navigate = useNavigate();
+  const { setUserAndToken } = useAuth();
   const hasGoogleClientId = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
@@ -70,20 +66,14 @@ function Login() {
       setEmailError("");
       return;
     }
-    setEmailError(
-      isValidNajahEmail(email)
-        ? ""
-        : "Please use an email ending with @stu.najah.edu or @najah.edu",
-    );
+    setEmailError(isEmailAllowed(email) ? "" : getEmailRuleMessage());
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoginError("");
-    if (!isValidNajahEmail(email)) {
-      setEmailError(
-        "Please use an email ending with @stu.najah.edu or @najah.edu",
-      );
+    if (!isEmailAllowed(email)) {
+      setEmailError(getEmailRuleMessage());
       return;
     }
     setEmailError("");
@@ -93,93 +83,38 @@ function Login() {
     }
     setFormLoading(true);
     const emailNorm = email.trim().toLowerCase();
-    const isDemoAdmin = import.meta.env.DEV && emailNorm === "admin@najah.edu" && password === "1234";
-    const isDemoStudent = import.meta.env.DEV && emailNorm === "student@stu.najah.edu" && password === "1234";
+    const passwordTrimmed = password.trim();
 
     try {
       const res = await fetch(apiUrl("/api/auth/login"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: emailNorm, password }),
+        credentials: "include",
+        body: JSON.stringify({ email: emailNorm, password: passwordTrimmed }),
       });
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        if (isDemoAdmin) {
-          localStorage.setItem("user", JSON.stringify({ id: 1, email: "admin@najah.edu", role: "admin", name: "Admin" }));
-          navigate("/admin", { replace: true, state: { fromLogin: true } });
-          return;
-        }
-        if (isDemoStudent) {
-          const demoUser = { id: 2, email: "student@stu.najah.edu", role: "user", name: "Student" };
-          localStorage.setItem("user", JSON.stringify(demoUser));
-          try {
-            const profileRaw = localStorage.getItem("studentProfile");
-            const profiles = profileRaw ? JSON.parse(profileRaw) : {};
-            if (!profiles["2"]) {
-              profiles["2"] = {
-                college: "College of Engineering",
-                major: "Computer Science",
-                gpa: 3.85,
-                creditsEarned: 92,
-                creditsTotal: 120,
-              };
-              localStorage.setItem("studentProfile", JSON.stringify(profiles));
-            }
-          } catch {
-            // ignore
-          }
-          navigate("/", { replace: true, state: { fromLogin: true } });
-          return;
-        }
-        const status = res.status;
-        const hint = status === 502 || status === 503 || status === 504
-          ? "Backend is not running. In a separate terminal run: npm run server"
-          : "Backend may be down or returned an error. Run: npm run server";
-        setLoginError(hint);
-        return;
-      }
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setLoginError(data.error || "Sign-in failed. Please try again.");
         return;
       }
-      if (data.user) {
-        localStorage.setItem("user", JSON.stringify(data.user));
-        if (data.user.role === "admin") {
-          navigate("/admin", { replace: true, state: { fromLogin: true } });
-        } else {
-          navigate("/events", { replace: true, state: { fromLogin: true } });
-        }
+      const user = data.user;
+      const token = data.token;
+      if (user && token) {
+        setUserAndToken(user, token);
+        const loginState = { replace: true, state: { fromLogin: true } };
+        setTimeout(() => {
+          if (isAdmin(user)) {
+            navigate("/admin", loginState);
+          } else if (isDean(user) || isSupervisor(user) || isCommunityLeader(user)) {
+            navigate("/communities", loginState);
+          } else {
+            navigate("/events", loginState);
+          }
+        }, 0);
+      } else {
+        setLoginError(data.error || "Invalid response from server. Please try again.");
       }
     } catch (err) {
-      if (isDemoAdmin) {
-        localStorage.setItem("user", JSON.stringify({ id: 1, email: "admin@najah.edu", role: "admin", name: "Admin" }));
-        navigate("/admin", { replace: true, state: { fromLogin: true } });
-        return;
-      }
-      if (isDemoStudent) {
-        const demoUser = { id: 2, email: "student@stu.najah.edu", role: "user", name: "Student" };
-        localStorage.setItem("user", JSON.stringify(demoUser));
-        try {
-          const profileRaw = localStorage.getItem("studentProfile");
-          const profiles = profileRaw ? JSON.parse(profileRaw) : {};
-          if (!profiles["2"]) {
-            profiles["2"] = {
-              college: "College of Engineering",
-              major: "Computer Science",
-              gpa: 3.85,
-              creditsEarned: 92,
-              creditsTotal: 120,
-            };
-            localStorage.setItem("studentProfile", JSON.stringify(profiles));
-          }
-        } catch {
-          // ignore
-        }
-        navigate("/", { replace: true, state: { fromLogin: true } });
-        return;
-      }
       setLoginError(
         err.message === "Failed to fetch"
           ? "Cannot connect to server. Start the backend with: npm run server"
@@ -208,12 +143,18 @@ function Login() {
         return;
       }
       if (data.user) {
-        localStorage.setItem("user", JSON.stringify(data.user));
-        if (data.user.role === "admin") {
-          navigate("/admin", { replace: true, state: { fromLogin: true } });
-        } else {
-          navigate("/events", { replace: true, state: { fromLogin: true } });
-        }
+        const user = data.user;
+        setUserAndToken(user, data.token || null);
+        const loginState = { replace: true, state: { fromLogin: true } };
+        setTimeout(() => {
+          if (isAdmin(user)) {
+            navigate("/admin", loginState);
+          } else if (isDean(user) || isSupervisor(user) || isCommunityLeader(user)) {
+            navigate("/communities", loginState);
+          } else {
+            navigate("/events", loginState);
+          }
+        }, 0);
       }
     } catch {
       setGoogleError("Sign-in failed. Please try again.");
@@ -292,10 +233,9 @@ rgb(240, 237, 237) 38%,
                     {emailError}
                   </p>
                 )}
-                {!emailError && (
+                {!emailError && getAllowedDomains().length > 0 && (
                   <p className="mt-1.5 text-xs text-slate-500">
-                    Allowed: <span className="font-medium">@stu.najah.edu</span>
-                    , <span className="font-medium">@najah.edu</span>
+                    Allowed: <span className="font-medium">{getAllowedDomains().join(", ")}</span>
                   </p>
                 )}
               </div>
@@ -418,9 +358,11 @@ rgb(240, 237, 237) 38%,
                   Signing you in…
                 </p>
               )}
-              <p className="text-center text-xs text-slate-500">
-                Only @stu.najah.edu or @najah.edu Google accounts are allowed.
-              </p>
+              {getAllowedDomains().length > 0 && (
+                <p className="text-center text-xs text-slate-500">
+                  Only {getAllowedDomains().join(" or ")} Google accounts are allowed.
+                </p>
+              )}
               {googleError && (
                 <p className="text-sm text-red-600 text-center">
                   {googleError}

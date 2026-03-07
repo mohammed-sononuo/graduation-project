@@ -1,14 +1,11 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { EVENTS } from '../data/events';
-import { COLLEGES, ALL_MAJORS } from '../data/collegesAndMajors';
+import { useAuth } from '../context/AuthContext';
+import { getEvent, getColleges, getMajors, registerForEvent } from '../api';
+import { REVIEW_MAX_CHARS } from '../../config/rules.js';
 
-import { getManagedEvents, mapManagedToPublicEvent } from '../data/managedEvents';
-
-const REVIEW_MAX_CHARS = 300;
 const REVIEWS_SECTION_ID = 'event-reviews';
 const FEEDBACK_DISPLAYED_ON_PAGE = 2;
-const EVENT_REGISTRATIONS_KEY = 'eventRegistrations';
 
 const MOCK_REVIEWS_INITIAL = [
   { id: '1', name: 'Dr. James Davidson', initials: 'JD', rating: 5, comment: 'An inspiring evening of academic excellence. The cross-disciplinary dialogue was particularly enlightening.', createdAt: '2024-09-20T14:00:00Z' },
@@ -388,6 +385,7 @@ function NotFound() {
 
 function EventDetails() {
   const { id } = useParams();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [reviews, setReviews] = useState(MOCK_REVIEWS_INITIAL);
   const [rating, setRating] = useState(0);
@@ -406,24 +404,41 @@ function EventDetails() {
   const textareaRef = useRef(null);
   const ratingRef = useRef(null);
 
-  const event = useMemo(() => {
-    const fromData = EVENTS.find((e) => e.id === id);
-    const managedList = getManagedEvents();
-    const managed = managedList.find((e) => e.id === id);
-    if (fromData) {
-      return { ...fromData, customSections: managed?.customSections ?? fromData.customSections ?? [] };
-    }
-    if (managed && managed.status === 'approved') {
-      return { ...mapManagedToPublicEvent(managed), customSections: managed.customSections || [] };
-    }
-    return null;
-  }, [id]);
-  const isPast = event?.status === 'past';
+  const [eventRaw, setEventRaw] = useState(null);
 
   useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 400);
-    return () => clearTimeout(t);
+    if (!id) return;
+    setLoading(true);
+    getEvent(id)
+      .then((e) => {
+        if (!e) return setEventRaw(null);
+        const start = e.startDate ? new Date(e.startDate) : null;
+        const dateStr = start && !isNaN(start.getTime())
+          ? start.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+          : '';
+        setEventRaw({
+          id: e.id,
+          title: e.title,
+          description: e.description || '',
+          category: e.category || 'Event',
+          date: dateStr,
+          time: e.startTime || '',
+          location: e.location || '',
+          image: e.image || '/event1.jpg',
+          status: e.status === 'approved' ? 'upcoming' : (e.status || 'upcoming'),
+          price: e.price,
+          priceMember: e.priceMember,
+          seatsRemaining: e.availableSeats ?? 45,
+          totalCapacity: e.availableSeats ?? 200,
+          customSections: e.customSections || [],
+        });
+      })
+      .catch(() => setEventRaw(null))
+      .finally(() => setLoading(false));
   }, [id]);
+
+  const event = eventRaw;
+  const isPast = event?.status === 'past';
 
   const ratingSummary = useMemo(() => {
     if (!reviews.length) return null;
@@ -445,9 +460,19 @@ function EventDetails() {
     return sorted.slice(0, FEEDBACK_DISPLAYED_ON_PAGE);
   }, [reviews]);
 
+  const [colleges, setColleges] = useState([]);
+  const [majorsList, setMajorsList] = useState([]);
+  useEffect(() => {
+    getColleges().then((list) => setColleges(Array.isArray(list) ? list : [])).catch(() => setColleges([]));
+  }, []);
+  useEffect(() => {
+    getMajors()
+      .then((list) => setMajorsList(Array.isArray(list) ? list : []))
+      .catch(() => setMajorsList([]));
+  }, []);
   const majorsForCollege = useMemo(
-    () => (regCollege ? ALL_MAJORS.filter((m) => m.collegeId === regCollege) : []),
-    [regCollege]
+    () => (regCollege ? majorsList.filter((m) => String(m.collegeId) === String(regCollege)) : []),
+    [regCollege, majorsList]
   );
 
   const handleSubmitReview = (e) => {
@@ -551,7 +576,7 @@ function EventDetails() {
   const eventPriceMember = event.priceMember != null ? event.priceMember : eventPrice;
   const formatPrice = (p) => (typeof p === 'number' ? `${p} NIS` : p);
 
-  const handleRegister = (e) => {
+  const handleRegister = async (e) => {
     e.preventDefault();
     const studentIdTrimmed = regStudentId.trim();
     if (studentIdTrimmed.length < 8) {
@@ -560,29 +585,20 @@ function EventDetails() {
     }
     setRegErrors({});
     setRegSubmitted(true);
+    if (!user || !event) return;
     try {
-      const userRaw = localStorage.getItem('user');
-      const user = userRaw ? JSON.parse(userRaw) : null;
-      if (user && event) {
-        const raw = localStorage.getItem(EVENT_REGISTRATIONS_KEY);
-        const data = raw ? JSON.parse(raw) : {};
-        const userId = String(user.id);
-        const list = Array.isArray(data[userId]) ? data[userId] : [];
-        if (!list.some((r) => r.eventId === event.id)) {
-          list.push({
-            eventId: event.id,
-            title: event.title,
-            date: event.date,
-            time: event.time,
-            image: event.image,
-            location: event.location,
-          });
-          data[userId] = list;
-          localStorage.setItem(EVENT_REGISTRATIONS_KEY, JSON.stringify(data));
-        }
-      }
+      await registerForEvent({
+        eventId: event.id,
+        studentId: studentIdTrimmed,
+        college: regCollege || undefined,
+        major: regMajor || undefined,
+        associationMember: regAssociationMember,
+        name: regName.trim() || undefined,
+        email: regEmail.trim() || user.email,
+      });
     } catch (err) {
-      console.warn('Could not save registration to profile', err);
+      console.warn('Registration failed', err);
+      setRegErrors({ submit: err.data?.error || 'Registration failed. Try again.' });
     }
   };
 
@@ -795,7 +811,7 @@ function EventDetails() {
                       className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#00356b]/20 focus:border-[#00356b]"
                     >
                       <option value="">Select college</option>
-                      {COLLEGES.map((c) => (
+                      {colleges.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name}
                         </option>

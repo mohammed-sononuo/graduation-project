@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+import { isAdmin, isDean, isSupervisor, isCommunityLeader, DEAN_DISPLAY_NAME, SUPERVISOR_DISPLAY_NAME, COMMUNITY_LEADER_DISPLAY_NAME } from "../utils/permissions";
+import { getEventRegistrations, getStudentProfile, saveStudentProfile as saveProfileApi } from "../api";
 
-const EVENT_REGISTRATIONS_KEY = "eventRegistrations";
-const STUDENT_PROFILE_KEY = "studentProfile";
 
 function IconId(props) {
   return (
@@ -55,29 +56,9 @@ function isEventCompleted(reg) {
   return !isNaN(d.getTime()) && d < new Date();
 }
 
-function getRegistrations(userId) {
-  try {
-    const raw = localStorage.getItem(EVENT_REGISTRATIONS_KEY);
-    const data = raw ? JSON.parse(raw) : {};
-    return Array.isArray(data[userId]) ? data[userId] : [];
-  } catch {
-    return [];
-  }
-}
-
-function getStudentProfile(userId) {
-  try {
-    const raw = localStorage.getItem(STUDENT_PROFILE_KEY);
-    const data = raw ? JSON.parse(raw) : {};
-    return data[String(userId)] || {};
-  } catch {
-    return {};
-  }
-}
-
 function Profile() {
   const navigate = useNavigate();
-  const [user, setUser] = useState(null);
+  const { user, loading } = useAuth();
   const [registrations, setRegistrations] = useState([]);
   const [studentProfile, setStudentProfile] = useState({});
   const [viewMode, setViewMode] = useState("grid");
@@ -87,14 +68,7 @@ function Profile() {
     if (!user) return;
     const next = { ...studentProfile, ...updates };
     setStudentProfile(next);
-    try {
-      const raw = localStorage.getItem(STUDENT_PROFILE_KEY);
-      const data = raw ? JSON.parse(raw) : {};
-      data[String(user.id)] = next;
-      localStorage.setItem(STUDENT_PROFILE_KEY, JSON.stringify(data));
-    } catch (e) {
-      console.warn("Could not save profile", e);
-    }
+    saveProfileApi(next).catch((e) => console.warn("Could not save profile", e));
   };
 
   const handlePhotoChange = (e) => {
@@ -109,22 +83,23 @@ function Profile() {
   };
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("user");
-      const u = stored ? JSON.parse(stored) : null;
-      if (!u) {
-        navigate("/login", { replace: true });
-        return;
-      }
-      setUser(u);
-      setRegistrations(getRegistrations(String(u.id)));
-      setStudentProfile(getStudentProfile(u.id));
-    } catch {
+    if (!user) return;
+    getEventRegistrations()
+      .then((list) => setRegistrations(Array.isArray(list) ? list : []))
+      .catch(() => setRegistrations([]));
+    getStudentProfile()
+      .then((data) => setStudentProfile(data || {}))
+      .catch(() => setStudentProfile({}));
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user) {
       navigate("/login", { replace: true });
     }
-  }, [navigate]);
+  }, [user, loading, navigate]);
 
-  if (!user) {
+  if (loading || !user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f7f6f3]">
         <p className="text-slate-500">Loading…</p>
@@ -132,7 +107,10 @@ function Profile() {
     );
   }
 
-  const isAdmin = user.role === "admin";
+  const admin = isAdmin(user);
+  const dean = isDean(user);
+  const supervisor = isSupervisor(user);
+  const communityLeader = isCommunityLeader(user);
   const displayName = user.name || user.email || "User";
   const initial = (displayName[0] || "?").toUpperCase();
   const pictureUrl = studentProfile.picture || user.picture || null;
@@ -155,7 +133,7 @@ function Profile() {
 
       <div className="max-w-7xl mx-auto px-6 lg:px-10 py-8 lg:py-10">
         {/* Admin: professional card */}
-        {isAdmin && (
+        {admin && (
           <>
             <div className="bg-white rounded-lg shadow-sm border border-slate-200/90 overflow-hidden mb-6">
               <div className="p-6 lg:p-8 flex flex-col sm:flex-row items-start gap-6">
@@ -190,8 +168,70 @@ function Profile() {
           </>
         )}
 
+        {/* Dean Of A College: professional card */}
+        {!admin && dean && (
+          <div className="bg-white rounded-lg shadow-sm border border-slate-200/90 overflow-hidden mb-6">
+            <div className="p-6 lg:p-8 flex flex-col sm:flex-row items-start gap-6">
+              <div className="flex-shrink-0 w-20 h-20 rounded-full bg-[#0b2d52] text-white flex items-center justify-center text-2xl font-semibold ring-4 ring-white shadow-md" style={{ fontFamily: "'Libre Baskerville', Georgia, serif" }}>
+                {initial}
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-semibold text-slate-900 tracking-tight" style={{ fontFamily: "'Libre Baskerville', Georgia, serif" }}>
+                  {displayName}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">{user.email}</p>
+                <span className="inline-flex mt-2 rounded-md bg-[#0b2d52]/10 px-2.5 py-1 text-xs font-medium text-[#0b2d52]">
+                  {DEAN_DISPLAY_NAME}
+                </span>
+                {user.collegeName && <p className="mt-2 text-sm text-slate-600">College: {user.collegeName}</p>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Supervisor: professional card */}
+        {!admin && !dean && supervisor && (
+          <div className="bg-white rounded-lg shadow-sm border border-slate-200/90 overflow-hidden mb-6">
+            <div className="p-6 lg:p-8 flex flex-col sm:flex-row items-start gap-6">
+              <div className="flex-shrink-0 w-20 h-20 rounded-full bg-[#1e3a5f] text-white flex items-center justify-center text-2xl font-semibold ring-4 ring-white shadow-md" style={{ fontFamily: "'Libre Baskerville', Georgia, serif" }}>
+                {initial}
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-semibold text-slate-900 tracking-tight" style={{ fontFamily: "'Libre Baskerville', Georgia, serif" }}>
+                  {displayName}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">{user.email}</p>
+                <span className="inline-flex mt-2 rounded-md bg-[#1e3a5f]/10 px-2.5 py-1 text-xs font-medium text-[#1e3a5f]">
+                  {SUPERVISOR_DISPLAY_NAME}
+                </span>
+                {user.communityName && <p className="mt-2 text-sm text-slate-600">Community: {user.communityName}</p>}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Community Leader: professional card */}
+        {!admin && !dean && !supervisor && communityLeader && (
+          <div className="bg-white rounded-lg shadow-sm border border-slate-200/90 overflow-hidden mb-6">
+            <div className="p-6 lg:p-8 flex flex-col sm:flex-row items-start gap-6">
+              <div className="flex-shrink-0 w-20 h-20 rounded-full bg-[#2d5a87] text-white flex items-center justify-center text-2xl font-semibold ring-4 ring-white shadow-md" style={{ fontFamily: "'Libre Baskerville', Georgia, serif" }}>
+                {initial}
+              </div>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-semibold text-slate-900 tracking-tight" style={{ fontFamily: "'Libre Baskerville', Georgia, serif" }}>
+                  {displayName}
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">{user.email}</p>
+                <span className="inline-flex mt-2 rounded-md bg-[#2d5a87]/10 px-2.5 py-1 text-xs font-medium text-[#2d5a87]">
+                  {COMMUNITY_LEADER_DISPLAY_NAME}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Student: reference layout — left profile, right events grid */}
-        {!isAdmin && (
+        {!admin && !dean && !supervisor && !communityLeader && (
           <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-8 lg:gap-10">
             {/* Left: profile — sticky so it stays visible when scrolling */}
             <div className="lg:sticky lg:top-24 lg:self-start h-fit order-2 lg:order-1">
@@ -460,4 +500,3 @@ function Profile() {
 }
 
 export default Profile;
-export { EVENT_REGISTRATIONS_KEY, getRegistrations };

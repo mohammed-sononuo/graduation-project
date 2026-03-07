@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { getManagedEvents } from "../data/managedEvents";
-import { COLLEGES as SHARED_COLLEGES } from "../data/collegesAndMajors";
+import { useAuth } from "../context/AuthContext";
+import { isAdmin } from "../utils/permissions";
+import { getAdminEvents, getColleges } from "../api";
 
 // Mock analytics for dashboard (in a real app this would come from an API)
 const MOCK_KPIS = {
@@ -40,12 +41,6 @@ const MOCK_REVIEWS = [
 
 const REVIEWS_PER_PAGE = 3;
 
-// Colleges list reused from shared data (Majors / registration)
-const COLLEGE_FILTERS = SHARED_COLLEGES.map((c) => ({
-  id: c.id,
-  label: c.name,
-}));
-
 const COLLEGE_CLUBS = {
   // Engineering & IT
   "1": ["IEEE", "EWB"],
@@ -73,8 +68,9 @@ function StarRating({ value, max = 5 }) {
 
 function Dashboard() {
   const navigate = useNavigate();
-  const [user, setUser] = useState(null);
+  const { user, loading } = useAuth();
   const [events, setEvents] = useState([]);
+  const [collegeFilters, setCollegeFilters] = useState([]);
   const [selectedEventId, setSelectedEventId] = useState(null);
   const [selectedCollegeId, setSelectedCollegeId] = useState("");
   const [search, setSearch] = useState("");
@@ -82,27 +78,28 @@ function Dashboard() {
   const [reviewsShown, setReviewsShown] = useState(REVIEWS_PER_PAGE);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("user");
-      const u = stored ? JSON.parse(stored) : null;
-      if (!u || u.role !== "admin") {
-        navigate("/login", { replace: true });
-        return;
-      }
-      setUser(u);
-    } catch {
+    if (loading) return;
+    if (!user || !isAdmin(user)) {
       navigate("/login", { replace: true });
     }
-  }, [navigate]);
+  }, [user, loading, navigate]);
 
   useEffect(() => {
-    const list = getManagedEvents();
-    const approved = list.filter((e) => e.status === "approved");
-    setEvents(approved);
-    if (approved.length > 0 && !selectedEventId) {
-      setSelectedEventId(approved[0]?.id ?? null);
-    }
+    getColleges().then((list) => setCollegeFilters(Array.isArray(list) ? list.map((c) => ({ id: c.id, label: c.name })) : [])).catch(() => setCollegeFilters([]));
   }, []);
+
+  useEffect(() => {
+    if (loading || !user) return;
+    getAdminEvents()
+      .then((list) => {
+        const approved = (Array.isArray(list) ? list : []).filter((e) => e.status === "approved");
+        setEvents(approved);
+        if (approved.length > 0 && !selectedEventId) {
+          setSelectedEventId(approved[0]?.id ?? null);
+        }
+      })
+      .catch(() => setEvents([]));
+  }, [loading, user]);
 
   const associationOptions = useMemo(() => {
     if (!selectedCollegeId) return [];
@@ -158,7 +155,7 @@ function Dashboard() {
   const visibleReviews = MOCK_REVIEWS.slice(0, reviewsShown);
   const hasMoreReviews = reviewsShown < MOCK_REVIEWS.length;
 
-  if (!user) {
+  if (loading || !user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f7f6f3]">
         <p className="text-slate-500">Loading…</p>
@@ -192,7 +189,7 @@ function Dashboard() {
               Analytical insights based on student feedback.
             </p>
             <div className="mt-4 flex flex-wrap justify-center gap-2">
-              {COLLEGE_FILTERS.map((c) => {
+              {collegeFilters.map((c) => {
                 const active = selectedCollegeId === c.id;
                 return (
                   <button

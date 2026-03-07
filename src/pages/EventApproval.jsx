@@ -1,21 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { MANAGED_EVENTS_KEY, getManagedEvents } from "../data/managedEvents";
+import { useAuth } from "../context/AuthContext";
+import { isAdmin } from "../utils/permissions";
+import { getAdminEvents, approveEvent, rejectEvent, updateEvent } from "../api";
 import SmallApprovalStepper from "../components/SmallApprovalStepper";
-
-const STORAGE_KEY = MANAGED_EVENTS_KEY;
-
-function loadEvents() {
-  return getManagedEvents();
-}
-
-function saveEvents(events) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(events));
-  } catch (e) {
-    console.warn("Failed to save events", e);
-  }
-}
 
 function formatDate(dateStr) {
   if (!dateStr) return "—";
@@ -29,7 +17,7 @@ function formatTime(timeStr) {
 
 function EventApproval() {
   const navigate = useNavigate();
-  const [user, setUser] = useState(null);
+  const { user, loading } = useAuth();
   const [events, setEvents] = useState([]);
   const [pending, setPending] = useState([]);
   const [feedbackFor, setFeedbackFor] = useState(null);
@@ -37,41 +25,34 @@ function EventApproval() {
   const [expandedId, setExpandedId] = useState(null);
 
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("user");
-      const u = stored ? JSON.parse(stored) : null;
-      if (!u || u.role !== "admin") {
-        navigate("/login", { replace: true });
-        return;
-      }
-      setUser(u);
-    } catch {
+    if (loading) return;
+    if (!user || !isAdmin(user)) {
       navigate("/login", { replace: true });
     }
-  }, [navigate]);
+  }, [user, loading, navigate]);
 
-  useEffect(() => {
-    const list = loadEvents();
-    setEvents(list);
-    setPending(list.filter((e) => e.status === "pending"));
+  const loadEvents = useCallback(() => {
+    getAdminEvents()
+      .then((list) => {
+        setEvents(Array.isArray(list) ? list : []);
+        setPending((Array.isArray(list) ? list : []).filter((e) => e.status === "pending"));
+      })
+      .catch(() => {
+        setEvents([]);
+        setPending([]);
+      });
   }, []);
 
-  const persist = (nextList) => {
-    setEvents(nextList);
-    setPending(nextList.filter((e) => e.status === "pending"));
-    saveEvents(nextList);
-  };
+  useEffect(() => {
+    if (isAdmin(user)) loadEvents();
+  }, [user, loadEvents]);
 
   const handleApprove = (ev) => {
-    const next = events.map((e) => (e.id === ev.id ? { ...e, status: "approved" } : e));
-    persist(next);
-    setFeedbackFor(null);
+    approveEvent(ev.id).then(() => { loadEvents(); setFeedbackFor(null); }).catch((e) => console.warn(e));
   };
 
   const handleReject = (ev) => {
-    const next = events.map((e) => (e.id === ev.id ? { ...e, status: "rejected" } : e));
-    persist(next);
-    setFeedbackFor(null);
+    rejectEvent(ev.id, ev.feedback).then(() => { loadEvents(); setFeedbackFor(null); }).catch((e) => console.warn(e));
   };
 
   const handleRequestChanges = (ev) => {
@@ -80,12 +61,9 @@ function EventApproval() {
       setFeedbackText(ev.feedback || "");
       return;
     }
-    const next = events.map((e) =>
-      e.id === ev.id ? { ...e, status: "needs_changes", feedback: feedbackText.trim() || undefined } : e
-    );
-    persist(next);
-    setFeedbackFor(null);
-    setFeedbackText("");
+    updateEvent(ev.id, { ...ev, status: "needs_changes", feedback: feedbackText.trim() || null })
+      .then(() => { loadEvents(); setFeedbackFor(null); setFeedbackText(""); })
+      .catch((e) => console.warn(e));
   };
 
   const cancelFeedback = () => {
@@ -93,7 +71,7 @@ function EventApproval() {
     setFeedbackText("");
   };
 
-  if (!user) {
+  if (loading || !user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#f7f6f3]">
         <p className="text-slate-500">Loading…</p>
