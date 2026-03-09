@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { isAdmin } from '../utils/permissions';
-import { getAdminEvents, createEvent, updateEvent, deleteEvent } from '../api';
+import { isAdmin, isCommunityLeader } from '../utils/permissions';
+import { getAdminEvents, createEvent, updateEvent, deleteEvent, getCommunities, getColleges, getMajors } from '../api';
 import SmallApprovalStepper from '../components/SmallApprovalStepper';
 
 const HERO_BG = '/manage-events-hero.png';
@@ -55,7 +55,9 @@ function EventCard({ ev, selectedId, setSelectedId, setShowForm, onDelete, event
         </span>
       </div>
       <div className="p-4">
-        <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Club: {ev.clubName || 'University'}</p>
+        <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
+          {ev.communityName ? `${ev.communityName}${ev.collegeName ? ` · ${ev.collegeName}` : ''}` : (ev.clubName || 'University')}
+        </p>
         <h3 className="font-serif text-base font-semibold text-[#0b2d52] mt-0.5 line-clamp-2 leading-snug">{ev.title}</h3>
         <p className="text-sm text-slate-600 mt-1.5">
           {formatDisplayDate(ev.startDate)} | {formatDisplayTime(ev.startTime)}
@@ -130,6 +132,7 @@ function ManageEvents() {
   const [events, setEvents] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [feedbackEvent, setFeedbackEvent] = useState(null);
+  const [communities, setCommunities] = useState([]);
   const [form, setForm] = useState({
     title: '',
     clubName: '',
@@ -143,12 +146,21 @@ function ManageEvents() {
     availableSeats: '',
     price: '',
     priceMember: '',
+    communityId: '',
     customSections: [],
+    forAllColleges: true,
+    targetCollegeIds: [],
+    targetAllMajors: true,
+    targetMajorIds: [],
   });
+  const [colleges, setColleges] = useState([]);
+  const [majors, setMajors] = useState([]);
   const [formErrors, setFormErrors] = useState({});
   const [showForm, setShowForm] = useState(false);
   const { user, loading } = useAuth();
-  const accessAllowed = isAdmin(user);
+  const admin = isAdmin(user);
+  const communityLeader = isCommunityLeader(user);
+  const accessAllowed = admin || communityLeader;
 
   useEffect(() => {
     if (!loading && !user) navigate('/login', { replace: true });
@@ -173,12 +185,34 @@ function ManageEvents() {
   );
 
   useEffect(() => {
-    if (isAdmin(user)) loadEvents();
-  }, [user, loadEvents]);
+    if (accessAllowed) loadEvents();
+  }, [user, loadEvents, accessAllowed]);
+
+  useEffect(() => {
+    if (accessAllowed) getCommunities().then((list) => setCommunities(Array.isArray(list) ? list : [])).catch(() => setCommunities([]));
+  }, [user, accessAllowed]);
+
+  useEffect(() => {
+    if (accessAllowed) getColleges().then((list) => setColleges(Array.isArray(list) ? list : [])).catch(() => setColleges([]));
+  }, [user, accessAllowed]);
+
+  useEffect(() => {
+    if (form.targetCollegeIds.length === 0) {
+      setMajors([]);
+      return;
+    }
+    getMajors().then((list) => {
+      const all = Array.isArray(list) ? list : [];
+      const filtered = all.filter((m) => form.targetCollegeIds.includes(String(m.collegeId)));
+      setMajors(filtered);
+    }).catch(() => setMajors([]));
+  }, [form.targetCollegeIds]);
 
   useEffect(() => {
     const ev = selectedId ? events.find((e) => e.id === selectedId) : null;
     if (ev) {
+      const targetCollegeIds = Array.isArray(ev.targetCollegeIds) ? ev.targetCollegeIds.map((id) => String(id)) : [];
+      const targetMajorIds = Array.isArray(ev.targetMajorIds) ? ev.targetMajorIds.map((id) => String(id)) : [];
       setForm({
         title: ev.title || '',
         clubName: ev.clubName || '',
@@ -192,7 +226,12 @@ function ManageEvents() {
         availableSeats: ev.availableSeats != null ? String(ev.availableSeats) : '',
         price: ev.price != null ? String(ev.price) : '',
         priceMember: ev.priceMember != null ? String(ev.priceMember) : '',
+        communityId: ev.communityId != null ? String(ev.communityId) : '',
         customSections: Array.isArray(ev.customSections) ? ev.customSections.map((s) => ({ ...s })) : [],
+        forAllColleges: ev.forAllColleges !== false,
+        targetCollegeIds,
+        targetAllMajors: ev.targetAllMajors !== false,
+        targetMajorIds,
       });
     } else {
       setForm({
@@ -208,7 +247,12 @@ function ManageEvents() {
         availableSeats: '',
         price: '',
         priceMember: '',
+        communityId: '',
         customSections: [],
+        forAllColleges: true,
+        targetCollegeIds: [],
+        targetAllMajors: true,
+        targetMajorIds: [],
       });
       setFormErrors({});
     }
@@ -227,7 +271,7 @@ function ManageEvents() {
       <div className="min-h-screen flex items-center justify-center bg-[#f7f6f3] px-4">
         <div className="max-w-md w-full text-center rounded-2xl border border-slate-200 bg-white shadow-sm p-8">
           <h1 className="text-xl font-semibold text-slate-900">Access restricted</h1>
-          <p className="mt-2 text-slate-600">Manage Events is available to administrators only.</p>
+          <p className="mt-2 text-slate-600">Manage Events is available to administrators and community leaders only.</p>
           <Link
             to="/"
             className="mt-6 inline-block rounded-full bg-[#00356b] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#002a54] focus:outline-none focus:ring-2 focus:ring-[#00356b]/30"
@@ -246,6 +290,14 @@ function ManageEvents() {
     const err = {};
     if (!form.title?.trim()) err.title = 'Event title is required';
     if (!form.description?.trim()) err.description = 'Description is required';
+    const hasCommunity = form.communityId !== '' && form.communityId != null || (communityLeader && user?.community_id != null);
+    if (!hasCommunity) err.communityId = 'Community is required (each event is connected to a community and its college)';
+    if (!form.forAllColleges && (!Array.isArray(form.targetCollegeIds) || form.targetCollegeIds.length === 0)) {
+      err.audience = 'Select at least one college when event is for specific colleges.';
+    }
+    if (!form.forAllColleges && !form.targetAllMajors && (!Array.isArray(form.targetMajorIds) || form.targetMajorIds.length === 0)) {
+      err.audience = err.audience || 'Select at least one major when event is for specific majors.';
+    }
     if (!form.startDate?.trim()) err.startDate = 'Start date is required';
     if (!form.startTime?.trim()) err.startTime = 'Start time is required';
     if (!form.endDate?.trim()) err.endDate = 'End date is required';
@@ -262,11 +314,14 @@ function ManageEvents() {
   const handleSubmitForApproval = async (e) => {
     e.preventDefault();
     if (!validate()) return;
+    const effectiveCommunityId = form.communityId ? Number(form.communityId) : (communityLeader && user?.community_id != null ? Number(user.community_id) : undefined);
+    const effectiveClubName = communityLeader && user?.communityName ? String(user.communityName).trim() : (form.clubName.trim() || 'University');
     const payload = {
       id: selectedEvent?.id || `ev-${Date.now()}`,
       title: form.title.trim(),
-      clubName: form.clubName.trim() || 'University',
+      clubName: effectiveClubName,
       description: form.description.trim(),
+      communityId: effectiveCommunityId,
       startDate: form.startDate.trim() || null,
       startTime: form.startTime.trim() || null,
       endDate: form.endDate.trim() || null,
@@ -284,6 +339,10 @@ function ManageEvents() {
       feedback: selectedEvent?.status === 'needs_changes' ? undefined : selectedEvent?.feedback,
       image: (form.image || '').trim() || '/event1.jpg',
       category: selectedEvent?.category || 'Event',
+      forAllColleges: form.forAllColleges !== false,
+      targetCollegeIds: form.forAllColleges ? [] : (form.targetCollegeIds || []).map(Number).filter((n) => !Number.isNaN(n)),
+      targetAllMajors: form.targetAllMajors !== false,
+      targetMajorIds: form.targetAllMajors ? [] : (form.targetMajorIds || []).map(Number).filter((n) => !Number.isNaN(n)),
     };
     try {
       if (selectedEvent) {
@@ -303,9 +362,11 @@ function ManageEvents() {
 
   const handleAddNewEvent = () => {
     setSelectedId(null);
+    const defaultCommunityId = communityLeader && user?.community_id != null ? String(user.community_id) : '';
+    const defaultClubName = communityLeader && user?.communityName ? String(user.communityName) : '';
     setForm({
       title: '',
-      clubName: '',
+      clubName: defaultClubName,
       description: '',
       image: '',
       startDate: '',
@@ -316,7 +377,12 @@ function ManageEvents() {
       availableSeats: '',
       price: '',
       priceMember: '',
+      communityId: defaultCommunityId,
       customSections: [],
+      forAllColleges: true,
+      targetCollegeIds: [],
+      targetAllMajors: true,
+      targetMajorIds: [],
     });
     setFormErrors({});
   };
@@ -464,18 +530,151 @@ function ManageEvents() {
                       <label htmlFor="me-club" className="block text-sm font-semibold text-slate-700 mb-1.5">
                         Club / Association name
                       </label>
-                      <input
-                        id="me-club"
-                        type="text"
-                        value={form.clubName}
-                        onChange={(e) => setFormField('clubName', e.target.value)}
-                        placeholder="e.g., IEEE Student Branch"
-                        className="w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00356b]/20 focus:border-[#00356b]"
-                      />
-                      <p className="mt-1 text-xs text-slate-500">
-                        Leave empty for a general university event.
-                      </p>
+                      {communityLeader && user?.communityName ? (
+                        <div className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-700">
+                          {user.communityName}
+                        </div>
+                      ) : (
+                        <>
+                          <input
+                            id="me-club"
+                            type="text"
+                            value={form.clubName}
+                            onChange={(e) => setFormField('clubName', e.target.value)}
+                            placeholder="e.g., IEEE Student Branch"
+                            className="w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00356b]/20 focus:border-[#00356b]"
+                          />
+                          <p className="mt-1 text-xs text-slate-500">
+                            Leave empty for a general university event.
+                          </p>
+                        </>
+                      )}
                     </div>
+                  </div>
+                  <div>
+                    <label htmlFor="me-community" className="block text-sm font-semibold text-slate-700 mb-1.5">
+                      Community <span className="text-red-500">*</span>
+                    </label>
+                    {communityLeader ? (
+                      <div className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-700">
+                        {communities.find((c) => String(c.id) === form.communityId)?.name || (communities[0]?.name ?? 'Your community')}
+                        {communities[0]?.collegeName && ` (${communities[0].collegeName})`}
+                      </div>
+                    ) : (
+                      <select
+                        id="me-community"
+                        value={form.communityId}
+                        onChange={(e) => setFormField('communityId', e.target.value)}
+                        className={`w-full rounded-xl border bg-white px-4 py-2.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-[#00356b]/20 focus:border-[#00356b] ${formErrors.communityId ? 'border-red-500' : 'border-slate-200'}`}
+                      >
+                        <option value="">Select community (event is linked to community and its college)</option>
+                        {communities.map((c) => (
+                          <option key={c.id} value={String(c.id)}>
+                            {c.name}{c.collegeName ? ` (${c.collegeName})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {formErrors.communityId && (
+                      <p className="mt-1 text-sm text-red-600" role="alert">{formErrors.communityId}</p>
+                    )}
+                  </div>
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/50 p-4 space-y-4">
+                    <h3 className="text-sm font-semibold text-slate-800">Who can join?</h3>
+                    <p className="text-xs text-slate-600">Choose whether this event is open to all students or only specific colleges and majors.</p>
+                    <div>
+                      <span className="block text-xs font-medium text-slate-600 mb-2">Colleges</span>
+                      <div className="flex flex-wrap gap-3">
+                        <label className="inline-flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="audience-colleges"
+                            checked={form.forAllColleges === true}
+                            onChange={() => {
+                              setForm((prev) => ({ ...prev, forAllColleges: true, targetCollegeIds: [], targetAllMajors: true, targetMajorIds: [] }));
+                              setFormErrors((prev) => ({ ...prev, audience: undefined }));
+                            }}
+                            className="text-[#00356b] border-slate-300 focus:ring-[#00356b]"
+                          />
+                          <span className="text-sm text-slate-700">All colleges</span>
+                        </label>
+                        <label className="inline-flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="radio"
+                            name="audience-colleges"
+                            checked={form.forAllColleges === false}
+                            onChange={() => setFormField('forAllColleges', false)}
+                            className="text-[#00356b] border-slate-300 focus:ring-[#00356b]"
+                          />
+                          <span className="text-sm text-slate-700">Specific colleges</span>
+                        </label>
+                      </div>
+                      {!form.forAllColleges && (
+                        <div className="mt-2">
+                          <select
+                            multiple
+                            value={form.targetCollegeIds}
+                            onChange={(e) => {
+                              const selected = Array.from(e.target.selectedOptions, (o) => o.value);
+                              setFormField('targetCollegeIds', selected);
+                              setFormField('targetAllMajors', true);
+                              setFormField('targetMajorIds', []);
+                            }}
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm min-h-[80px]"
+                          >
+                            {colleges.map((c) => (
+                              <option key={c.id} value={String(c.id)}>{c.name}</option>
+                            ))}
+                          </select>
+                          <p className="mt-1 text-xs text-slate-500">Hold Ctrl/Cmd to select multiple.</p>
+                        </div>
+                      )}
+                    </div>
+                    {!form.forAllColleges && form.targetCollegeIds.length > 0 && (
+                      <div>
+                        <span className="block text-xs font-medium text-slate-600 mb-2">Majors</span>
+                        <div className="flex flex-wrap gap-3">
+                          <label className="inline-flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="audience-majors"
+                              checked={form.targetAllMajors === true}
+                              onChange={() => setForm((prev) => ({ ...prev, targetAllMajors: true, targetMajorIds: [] }))}
+                              className="text-[#00356b] border-slate-300 focus:ring-[#00356b]"
+                            />
+                            <span className="text-sm text-slate-700">All majors</span>
+                          </label>
+                          <label className="inline-flex items-center gap-2 cursor-pointer">
+                            <input
+                              type="radio"
+                              name="audience-majors"
+                              checked={form.targetAllMajors === false}
+                              onChange={() => setFormField('targetAllMajors', false)}
+                              className="text-[#00356b] border-slate-300 focus:ring-[#00356b]"
+                            />
+                            <span className="text-sm text-slate-700">Specific majors</span>
+                          </label>
+                        </div>
+                        {!form.targetAllMajors && (
+                          <div className="mt-2">
+                            <select
+                              multiple
+                              value={form.targetMajorIds}
+                              onChange={(e) => setFormField('targetMajorIds', Array.from(e.target.selectedOptions, (o) => o.value))}
+                              className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm min-h-[80px]"
+                            >
+                              {majors.map((m) => (
+                                <option key={m.id} value={String(m.id)}>{m.name}</option>
+                              ))}
+                            </select>
+                            <p className="mt-1 text-xs text-slate-500">Hold Ctrl/Cmd to select multiple.</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {formErrors.audience && (
+                      <p className="text-sm text-red-600" role="alert">{formErrors.audience}</p>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-semibold text-slate-700 mb-1.5">Event photo</label>

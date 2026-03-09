@@ -2,28 +2,24 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiUrl } from "../api";
 import { useAuth } from "../context/AuthContext";
+import { validatePassword, getPasswordRules } from "../../config/rules.js";
 
 function ChangePassword() {
   const navigate = useNavigate();
-  const { user, setUserAndToken } = useAuth();
+  const { user, loading, setUserAndToken } = useAuth();
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (user === null && !localStorage.getItem("token")) {
+    if (!loading && user === null) {
       navigate("/login", { replace: true });
     }
-  }, [user, navigate]);
+  }, [user, loading, navigate]);
 
-  const token = typeof localStorage !== "undefined" ? localStorage.getItem("token") : null;
-  let storedUser = null;
-  try {
-    storedUser = typeof localStorage !== "undefined" && localStorage.getItem("user") ? JSON.parse(localStorage.getItem("user")) : null;
-  } catch (_) {}
-  const currentUser = user ?? storedUser;
+  const currentUser = user;
 
   if (currentUser == null) {
     return (
@@ -38,22 +34,20 @@ function ChangePassword() {
     setError("");
     if (!oldPassword || !newPassword || !confirm) { setError("All fields are required."); return; }
     if (newPassword !== confirm) { setError("New passwords do not match."); return; }
-    if (newPassword.length < 4) { setError("New password must be at least 4 characters."); return; }
-    setLoading(true);
+    const pwdCheck = validatePassword(newPassword);
+    if (!pwdCheck.valid) { setError(`New password: ${pwdCheck.errors.join(", ")}.`); return; }
+    setSubmitting(true);
     try {
       const res = await fetch(apiUrl("/api/auth/change-password"), {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ oldPassword, newPassword }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || "Failed to change password."); return; }
       const updated = data.user ? { ...currentUser, ...data.user } : { ...currentUser, must_change_password: false };
-      setUserAndToken(updated, token || null);
+      setUserAndToken(updated);
       if (updated.must_complete_profile) {
         navigate("/complete-profile", { replace: true });
       } else if (updated.role === "admin") {
@@ -62,7 +56,7 @@ function ChangePassword() {
         navigate("/dashboard", { replace: true });
       }
     } catch { setError("Failed to change password."); }
-    finally { setLoading(false); }
+    finally { setSubmitting(false); }
   };
 
   return (
@@ -88,14 +82,25 @@ function ChangePassword() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-              <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Choose a new password" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="At least 8 characters, upper, lower, number, special" minLength={8} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <ul className="mt-1.5 text-xs text-gray-500 space-y-0.5">
+                {getPasswordRules().map((rule) => {
+                  const errors = validatePassword(newPassword).errors;
+                  const met = !errors.includes(rule);
+                  return (
+                    <li key={rule} className={met ? "text-green-600" : ""}>
+                      {met ? "✓ " : "○ "}{rule}
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>
               <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} placeholder="Re-enter new password" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
-            <button type="submit" disabled={loading} className="w-full py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-60">
-              {loading ? "Changing…" : "Set New Password"}
+            <button type="submit" disabled={submitting} className="w-full py-3 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 disabled:opacity-60">
+              {submitting ? "Changing…" : "Set New Password"}
             </button>
           </form>
         </div>

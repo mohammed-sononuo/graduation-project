@@ -6,6 +6,9 @@
  *   - ALLOWED_EMAIL_DOMAINS = []   → same if REQUIRE_NAJAH_EMAIL is true
  *   - MIN_PASSWORD_LENGTH = 1      → relax password length (e.g. for dev)
  * Server and frontend (Login, Register) read from this file only.
+ *
+ * Roles: stored per user in app_users.role in the DB; the website reads the user's role (via /api/auth/me)
+ * to decide what to show (admin panel, communities, profile, etc.).
  */
 
 // --- Roles & permissions (admin has full access to everything you add)
@@ -62,7 +65,57 @@ export function isStudentRole(role) {
 export const ALLOWED_EMAIL_DOMAINS = ['@stu.najah.edu', '@najah.edu'];
 
 /** Minimum password length (registration and login validation). */
-export const MIN_PASSWORD_LENGTH = 4;
+export const MIN_PASSWORD_LENGTH = 8;
+
+/** Password must contain at least one uppercase letter. */
+export const PASSWORD_NEEDS_UPPERCASE = true;
+/** Password must contain at least one lowercase letter. */
+export const PASSWORD_NEEDS_LOWERCASE = true;
+/** Password must contain at least one digit. */
+export const PASSWORD_NEEDS_NUMBER = true;
+/** Password must contain at least one special character (!@#$%^&*()_+-=[]{}|;:'",.<>?/). */
+export const PASSWORD_NEEDS_SPECIAL = true;
+
+const UPPERCASE_REGEX = /[A-Z]/;
+const LOWERCASE_REGEX = /[a-z]/;
+const NUMBER_REGEX = /\d/;
+const SPECIAL_REGEX = /[!@#$%^&*()_+\-=[\]{}|;:'",.<>?/\\]/;
+
+/**
+ * Validate password against rules. Returns { valid: boolean, errors: string[] }.
+ */
+export function validatePassword(password) {
+  if (!password || typeof password !== 'string') {
+    return { valid: false, errors: ['Password is required.'] };
+  }
+  const errors = [];
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    errors.push(`At least ${MIN_PASSWORD_LENGTH} characters`);
+  }
+  if (PASSWORD_NEEDS_UPPERCASE && !UPPERCASE_REGEX.test(password)) {
+    errors.push('One uppercase letter');
+  }
+  if (PASSWORD_NEEDS_LOWERCASE && !LOWERCASE_REGEX.test(password)) {
+    errors.push('One lowercase letter');
+  }
+  if (PASSWORD_NEEDS_NUMBER && !NUMBER_REGEX.test(password)) {
+    errors.push('One number');
+  }
+  if (PASSWORD_NEEDS_SPECIAL && !SPECIAL_REGEX.test(password)) {
+    errors.push('One special character (!@#$%^&* etc.)');
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+/** Human-readable list of password rules for UI. */
+export function getPasswordRules() {
+  const rules = [`At least ${MIN_PASSWORD_LENGTH} characters`];
+  if (PASSWORD_NEEDS_UPPERCASE) rules.push('One uppercase letter');
+  if (PASSWORD_NEEDS_LOWERCASE) rules.push('One lowercase letter');
+  if (PASSWORD_NEEDS_NUMBER) rules.push('One number');
+  if (PASSWORD_NEEDS_SPECIAL) rules.push('One special character (!@#$%^&* etc.)');
+  return rules;
+}
 
 /** If false, any email is allowed (domain check skipped). Set to false for "less" rules. */
 export const REQUIRE_NAJAH_EMAIL = true;

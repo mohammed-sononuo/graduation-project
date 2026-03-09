@@ -26,11 +26,9 @@ Follow these steps to enable "Continue with Google" on the login page.
 2. Click **+ CREATE CREDENTIALS** → **OAuth client ID**.
 3. **Application type**: **Web application**.
 4. **Name**: e.g. "Graduation Project Web".
-5. Under **Authorized JavaScript origins**, click **+ ADD URI** and add **exactly** the URL you use to open the app in the browser, for example:
-   - `http://localhost:1573`  
-   If Vite uses another port (e.g. 1574, 1575), add that too, e.g.:
-   - `http://localhost:1574`
-   - `http://localhost:1575`
+5. Under **Authorized JavaScript origins**, click **+ ADD URI** and add **exactly** the URL you use to open the app in the browser. This project uses **port 3000** by default:
+   - `http://localhost:3000`  
+   (No path, no trailing slash. If you use another port, add that instead.)
 6. (Optional) Under **Authorized redirect URIs**: you can leave empty for the implicit flow used by this app.
 7. Click **Create**.
 8. Copy the **Client ID** (looks like `123456789012-xxxx.apps.googleusercontent.com`).
@@ -52,19 +50,19 @@ Restart so Vite picks up the new env variable:
 - Stop the current process (Ctrl+C).
 - Run again: `npm start`.
 
-Then open the app (e.g. `http://localhost:1573`), go to the login page, and use **Continue with Google**.
+Then open the app at **http://localhost:3000**, go to the login page, and click **Sign in with Google**.
 
 ## Troubleshooting
 
 | Problem | What to check |
 |--------|----------------|
 | **"The OAuth client was not found" / Error 401: invalid_client** | The Client ID in `.env` is wrong or still the placeholder. Create a real OAuth client in Google Cloud (step 3) and paste the Client ID into `VITE_GOOGLE_CLIENT_ID`. |
-| **"redirect_uri_mismatch" or "Access blocked"** | The URL in the browser (e.g. `http://localhost:1573`) must be listed exactly in **Authorized JavaScript origins** in the OAuth client. Add that URI and save. |
+| **"redirect_uri_mismatch" or "Access blocked"** | The URL in the browser (e.g. `http://localhost:3000`) must be listed exactly in **Authorized JavaScript origins** in the OAuth client. Use no path and no trailing slash. Add that URI and save. |
 | **Button doesn’t appear** | Ensure `.env` has `VITE_GOOGLE_CLIENT_ID` set to a real Client ID (not `your-google-client-id...` or `placeholder`). Restart the dev server after changing `.env`. |
 | **"Please use a Najah University Google account"** | Only `@stu.najah.edu` and `@najah.edu` are allowed. Sign in with one of those Google accounts. |
 
 ## Summary
 
 - **Client ID** from Google Cloud → into `.env` as `VITE_GOOGLE_CLIENT_ID`.
-- **Authorized JavaScript origins** = the exact URL you use (e.g. `http://localhost:1573`).
+- **Authorized JavaScript origins** = the exact URL you use (e.g. `http://localhost:3000` for this project).
 - Restart dev server after changing `.env`.

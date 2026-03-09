@@ -696,6 +696,29 @@ function EventDetails() {
                     <span className="text-sm text-slate-500 whitespace-nowrap">{totalCapacity} total capacity</span>
                   </div>
                 </div>
+                {(event.communityName || event.collegeName) && (
+                  <div>
+                    <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">Community & college</dt>
+                    <dd className="mt-1 text-base text-slate-600">
+                      {[event.communityName, event.collegeName].filter(Boolean).join(' · ')}
+                    </dd>
+                  </div>
+                )}
+                <div>
+                  <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">Who can join</dt>
+                  <dd className="mt-1 text-base text-slate-600">
+                    {event.forAllColleges !== false
+                      ? 'All students (any college and major)'
+                      : [
+                          event.targetCollegeNames?.length
+                            ? `Colleges: ${event.targetCollegeNames.join(', ')}`
+                            : 'Specific colleges',
+                          event.targetAllMajors !== false
+                            ? ' · All majors'
+                            : (event.targetMajorNames?.length ? ` · Majors: ${event.targetMajorNames.join(', ')}` : ' · Specific majors'),
+                        ].filter(Boolean).join('')}
+                  </dd>
+                </div>
                 {/* Extra sections (from Manage Events) – same style as Price, no new white card */}
                 {Array.isArray(event.customSections) && event.customSections.map((sec) => (
                   <div key={sec.id || sec.sectionTitle}>
@@ -713,7 +736,10 @@ function EventDetails() {
               <h2 className="text-lg font-semibold text-slate-900 mb-1">Reserve your seat</h2>
               <p className="text-sm text-slate-600 mb-5">Join us at {event.location}</p>
               {regSubmitted ? (
-                <p className="text-slate-600 text-sm">Thank you. Your registration has been submitted.</p>
+                <div className="text-slate-600 text-sm space-y-1">
+                  <p className="font-medium text-slate-800">Request submitted.</p>
+                  <p>Your registration is <strong>pending payment</strong>. After you pay, the community will mark it as paid and approve your spot. Spots are filled in order of payment until the event is full.</p>
+                </div>
               ) : (
                 <form onSubmit={handleRegister} className="space-y-4">
                   <div>
