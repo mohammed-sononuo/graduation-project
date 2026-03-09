@@ -27,6 +27,9 @@ const migrations = [
   '009_chatbot.sql',
   '010_module_data.sql',
   '011_communities_and_role_assignments.sql',
+  '012_ensure_app_users_full_schema.sql',
+  '013_events_community_college.sql',
+  '014_backfill_event_community.sql',
 ];
 
 async function run() {

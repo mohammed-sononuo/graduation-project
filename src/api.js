@@ -49,6 +49,10 @@ export async function createCommunity(body) {
   return apiRequest('/api/communities', { method: 'POST', body: JSON.stringify(body) });
 }
 
+export async function updateCommunity(id, body) {
+  return apiRequest(`/api/communities/${id}`, { method: 'PATCH', body: JSON.stringify(body) });
+}
+
 // ---------- Admin: users and role assignments ----------
 export async function getAdminUsers(role = null) {
   const q = role ? `?role=${encodeURIComponent(role)}` : '';

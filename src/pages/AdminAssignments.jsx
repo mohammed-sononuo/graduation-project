@@ -9,6 +9,7 @@ export default function AdminAssignments() {
   const { user, loading } = useAuth();
   const [deans, setDeans] = useState([]);
   const [supervisors, setSupervisors] = useState([]);
+  const [leaders, setLeaders] = useState([]);
   const [colleges, setColleges] = useState([]);
   const [communities, setCommunities] = useState([]);
   const [busy, setBusy] = useState({});
@@ -25,6 +26,7 @@ export default function AdminAssignments() {
     if (!user || !isAdmin(user)) return;
     getAdminUsers('dean').then((list) => setDeans(Array.isArray(list) ? list : [])).catch(() => setDeans([]));
     getAdminUsers('supervisor').then((list) => setSupervisors(Array.isArray(list) ? list : [])).catch(() => setSupervisors([]));
+    getAdminUsers('community_leader').then((list) => setLeaders(Array.isArray(list) ? list : [])).catch(() => setLeaders([]));
     getColleges().then((list) => setColleges(Array.isArray(list) ? list : [])).catch(() => setColleges([]));
     getCommunities().then((list) => setCommunities(Array.isArray(list) ? list : [])).catch(() => setCommunities([]));
   }, [user]);
@@ -45,10 +47,25 @@ export default function AdminAssignments() {
     setBusy((b) => ({ ...b, [`sup-${userId}`]: true }));
     assignSupervisorToCommunity(userId, Number(communityId))
       .then(() => {
-        setSupervisors((prev) => prev.map((s) => (s.id === userId ? { ...s, communityId: Number(communityId), communityName: communities.find((c) => c.id === Number(communityId))?.name } : s)));
+        const name = communities.find((c) => c.id === Number(communityId))?.name;
+        setSupervisors((prev) => prev.map((s) => (s.id === userId ? { ...s, communityId: Number(communityId), communityName: name } : s)));
+        setLeaders((prev) => prev.map((l) => (l.communityId === Number(communityId) ? { ...l, communityId: null, communityName: null } : l)));
       })
       .catch(() => {})
       .finally(() => setBusy((b) => ({ ...b, [`sup-${userId}`]: false })));
+  };
+
+  const onAssignLeader = (userId, communityId) => {
+    if (communityId === '' || communityId == null) return;
+    setBusy((b) => ({ ...b, [`leader-${userId}`]: true }));
+    assignSupervisorToCommunity(userId, Number(communityId))
+      .then(() => {
+        const name = communities.find((c) => c.id === Number(communityId))?.name;
+        setLeaders((prev) => prev.map((l) => (l.id === userId ? { ...l, communityId: Number(communityId), communityName: name } : l)));
+        setSupervisors((prev) => prev.map((s) => (s.communityId === Number(communityId) ? { ...s, communityId: null, communityName: null } : s)));
+      })
+      .catch(() => {})
+      .finally(() => setBusy((b) => ({ ...b, [`leader-${userId}`]: false })));
   };
 
   if (loading || !user) {
@@ -67,7 +84,7 @@ export default function AdminAssignments() {
           <h1 className="mt-2 text-2xl font-semibold text-white" style={{ fontFamily: "'Libre Baskerville', Georgia, serif" }}>
             Dean & Supervisor assignments
           </h1>
-          <p className="mt-1 text-sm text-white/80">One dean per college; one supervisor per community.</p>
+          <p className="mt-1 text-sm text-white/80">Each dean is connected with one college; each college has one dean. Each community has one leader; each leader leads one community.</p>
         </div>
       </section>
 
@@ -75,7 +92,7 @@ export default function AdminAssignments() {
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
             <h2 className="font-semibold text-slate-800">Deans (assign to college)</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Each college can have only one dean.</p>
+            <p className="text-xs text-slate-500 mt-0.5">Each dean is connected with one college; each college has one dean. Assigning a dean to a college replaces any previous dean for that college.</p>
           </div>
           <div className="divide-y divide-slate-100">
             {deans.length === 0 ? (
@@ -106,7 +123,7 @@ export default function AdminAssignments() {
         <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
             <h2 className="font-semibold text-slate-800">Supervisors (assign to community)</h2>
-            <p className="text-xs text-slate-500 mt-0.5">Each community can have only one supervisor.</p>
+            <p className="text-xs text-slate-500 mt-0.5">Each community has one leader; each leader leads one community. Assigning a supervisor to a community replaces any current leader of that community.</p>
           </div>
           <div className="divide-y divide-slate-100">
             {supervisors.length === 0 ? (
@@ -128,6 +145,37 @@ export default function AdminAssignments() {
                     ))}
                   </select>
                   {busy[`sup-${s.id}`] && <span className="text-xs text-slate-400">Saving…</span>}
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+            <h2 className="font-semibold text-slate-800">Community leaders (assign to community)</h2>
+            <p className="text-xs text-slate-500 mt-0.5">Each community has one leader; each leader leads one community. Assigning a leader to a community replaces any current leader of that community.</p>
+          </div>
+          <div className="divide-y divide-slate-100">
+            {leaders.length === 0 ? (
+              <div className="p-6 text-slate-500 text-sm">No users with role Community Leader.</div>
+            ) : (
+              leaders.map((l) => (
+                <div key={l.id} className="p-4 flex flex-wrap items-center gap-3">
+                  <span className="font-medium text-slate-900">{l.email}</span>
+                  <span className="text-sm text-slate-500">{l.communityName ? `→ ${l.communityName}` : 'Not assigned'}</span>
+                  <select
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm"
+                    value={l.communityId ?? ''}
+                    onChange={(e) => onAssignLeader(l.id, e.target.value)}
+                    disabled={busy[`leader-${l.id}`]}
+                  >
+                    <option value="">Select community</option>
+                    {communities.map((c) => (
+                      <option key={c.id} value={String(c.id)}>{c.name}{c.collegeName ? ` (${c.collegeName})` : ''}</option>
+                    ))}
+                  </select>
+                  {busy[`leader-${l.id}`] && <span className="text-xs text-slate-400">Saving…</span>}
                 </div>
               ))
             )}

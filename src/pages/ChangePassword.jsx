@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiUrl } from "../api";
 import { useAuth } from "../context/AuthContext";
+import { validatePassword, getPasswordRules } from "../../config/rules.js";
 
 function ChangePassword() {
   const navigate = useNavigate();
@@ -38,7 +39,8 @@ function ChangePassword() {
     setError("");
     if (!oldPassword || !newPassword || !confirm) { setError("All fields are required."); return; }
     if (newPassword !== confirm) { setError("New passwords do not match."); return; }
-    if (newPassword.length < 4) { setError("New password must be at least 4 characters."); return; }
+    const pwdCheck = validatePassword(newPassword);
+    if (!pwdCheck.valid) { setError(`New password: ${pwdCheck.errors.join(", ")}.`); return; }
     setLoading(true);
     try {
       const res = await fetch(apiUrl("/api/auth/change-password"), {
@@ -88,7 +90,18 @@ function ChangePassword() {
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">New Password</label>
-              <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Choose a new password" className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="At least 8 characters, upper, lower, number, special" minLength={8} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <ul className="mt-1.5 text-xs text-gray-500 space-y-0.5">
+                {getPasswordRules().map((rule) => {
+                  const errors = validatePassword(newPassword).errors;
+                  const met = !errors.includes(rule);
+                  return (
+                    <li key={rule} className={met ? "text-green-600" : ""}>
+                      {met ? "✓ " : "○ "}{rule}
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Confirm New Password</label>

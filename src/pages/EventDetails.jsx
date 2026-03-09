@@ -696,6 +696,14 @@ function EventDetails() {
                     <span className="text-sm text-slate-500 whitespace-nowrap">{totalCapacity} total capacity</span>
                   </div>
                 </div>
+                {(event.communityName || event.collegeName) && (
+                  <div>
+                    <dt className="text-xs font-semibold uppercase tracking-wider text-slate-500">Community & college</dt>
+                    <dd className="mt-1 text-base text-slate-600">
+                      {[event.communityName, event.collegeName].filter(Boolean).join(' · ')}
+                    </dd>
+                  </div>
+                )}
                 {/* Extra sections (from Manage Events) – same style as Price, no new white card */}
                 {Array.isArray(event.customSections) && event.customSections.map((sec) => (
                   <div key={sec.id || sec.sectionTitle}>

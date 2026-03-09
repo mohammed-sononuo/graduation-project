@@ -11,6 +11,7 @@
     "server:dev": "nodemon server/index.js --ext js",
     "migrate": "node server/run-migrations.js",
     "test:db": "node server/test-db.js",
+    "check:db": "node server/check-db.js",
     "seed:admin": "node server/seed-admin.js",
     "seed:dean": "node server/seed-dean.js",
     "seed:supervisor": "node server/seed-supervisor.js",

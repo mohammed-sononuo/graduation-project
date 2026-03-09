@@ -1,17 +1,53 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useGoogleLogin } from '@react-oauth/google';
 import { apiUrl } from '../api';
 import { useAuth } from '../context/AuthContext';
-import { isEmailAllowed, getEmailRuleMessage, MIN_PASSWORD_LENGTH } from '../../config/rules.js';
+import { isEmailAllowed, getEmailRuleMessage, validatePassword, getPasswordRules, getAllowedDomains } from '../../config/rules.js';
+
+function GoogleGIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
+      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+    </svg>
+  );
+}
+
+function GoogleSignInButton({ onSuccess, onError, disabled }) {
+  const login = useGoogleLogin({
+    onSuccess,
+    onError,
+    flow: 'implicit',
+    scope: 'email profile openid',
+  });
+  return (
+    <button
+      type="button"
+      onClick={() => login()}
+      disabled={disabled}
+      className="w-full inline-flex items-center justify-center gap-3 rounded-xl border border-slate-200 bg-white px-6 py-3 text-slate-800 font-semibold shadow-sm hover:bg-slate-50 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-[#00356b]/20 focus:ring-offset-2 disabled:opacity-70"
+    >
+      <GoogleGIcon />
+      <span>Continue with Google</span>
+    </button>
+  );
+}
 
 function Register() {
   const navigate = useNavigate();
-  const { setUserAndToken } = useAuth();
+  const { setUserAndToken, logout } = useAuth();
+  const rawClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
+  const hasGoogleClientId = Boolean(rawClientId && rawClientId !== 'your-google-client-id.apps.googleusercontent.com');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [googleError, setGoogleError] = useState('');
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -25,8 +61,9 @@ function Register() {
       setError(getEmailRuleMessage() || 'Please use a valid university email.');
       return;
     }
-    if (!password || password.length < MIN_PASSWORD_LENGTH) {
-      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+    const pwdCheck = validatePassword(password);
+    if (!pwdCheck.valid) {
+      setError(`Password: ${pwdCheck.errors.join(', ')}.`);
       return;
     }
     setLoading(true);
@@ -46,14 +83,83 @@ function Register() {
       }
       if (data.user && data.token) {
         setUserAndToken(data.user, data.token);
-        setMessage('Account created! Redirecting to home…');
-        setTimeout(() => navigate('/', { replace: true }), 800);
+        setMessage('Account created! Complete your profile…');
+        setTimeout(() => {
+          if (data.user.must_complete_profile) {
+            navigate('/complete-profile', { replace: true });
+          } else {
+            navigate('/', { replace: true });
+          }
+        }, 800);
+      } else {
+        setError(data.error || 'Registration succeeded but invalid response. Please log in.');
       }
     } catch {
       setError('Cannot connect to server. Please try again later.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGoogleSuccess = async (response) => {
+    setGoogleError('');
+    setLoading(false);
+    setGoogleLoading(true);
+    try {
+      const accessToken = response.access_token;
+      const credential = response.credential;
+      if (!accessToken && !credential) {
+        setGoogleError('Google did not return sign-in data. Please try again.');
+        return;
+      }
+      const body = credential ? { credential } : { access_token: accessToken };
+      const res = await fetch(apiUrl('/api/auth/google'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setGoogleError(data.error || 'Sign-in failed. Please try again.');
+        return;
+      }
+      // First-time Google: no account yet → complete profile, then account is created on "Save and continue"
+      if (data.pendingRegistration && data.tempToken) {
+        logout();
+        sessionStorage.setItem(
+          'pendingRegistration',
+          JSON.stringify({
+            email: data.email,
+            name: data.name,
+            picture: data.picture,
+            tempToken: data.tempToken,
+          })
+        );
+        navigate('/complete-profile', { replace: true, state: { pendingRegistration: true } });
+        return;
+      }
+      // Returning user: account already exists
+      if (data.user && data.token) {
+        setUserAndToken(data.user, data.token);
+        setMessage('Welcome back!');
+        setTimeout(() => navigate('/', { replace: true }), 500);
+      } else {
+        setGoogleError('Invalid response from server. Please try again.');
+      }
+    } catch (err) {
+      setGoogleError(
+        err?.message === 'Failed to fetch'
+          ? 'Cannot connect to server. Make sure the backend is running (npm run server).'
+          : 'Sign-in failed. Please try again.'
+      );
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleGoogleError = () => {
+    setGoogleError('Google sign-in was cancelled or failed. Please try again.');
+    setGoogleLoading(false);
   };
 
   const layeredBg = {
@@ -102,9 +208,21 @@ function Register() {
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter your password"
+                placeholder="At least 8 characters, upper, lower, number, special"
+                minLength={8}
                 className="w-full px-4 py-3 border border-slate-200 rounded-xl bg-white text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-[#00356b]/20 focus:border-[#00356b]"
               />
+              <ul className="mt-1.5 text-xs text-slate-500 space-y-0.5">
+                {getPasswordRules().map((rule) => {
+                  const errors = validatePassword(password).errors;
+                  const met = !errors.includes(rule);
+                  return (
+                    <li key={rule} className={met ? 'text-green-600' : ''}>
+                      {met ? '✓ ' : '○ '}{rule}
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
             {error && (
               <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
@@ -118,11 +236,41 @@ function Register() {
             )}
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || googleLoading}
               className="w-full inline-flex items-center justify-center rounded-xl bg-[#00356b] px-6 py-3 text-white font-semibold shadow-sm hover:bg-[#002a54] focus:outline-none focus:ring-2 focus:ring-[#00356b]/30 focus:ring-offset-2 disabled:opacity-70 disabled:cursor-not-allowed"
             >
               {loading ? 'Creating account…' : 'Create account'}
             </button>
+            {hasGoogleClientId && (
+              <>
+                <div className="relative my-6">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-slate-200" />
+                  </div>
+                  <div className="relative flex justify-center text-sm">
+                    <span className="bg-white px-3 text-slate-500">Or</span>
+                  </div>
+                </div>
+                <GoogleSignInButton
+                  onSuccess={handleGoogleSuccess}
+                  onError={handleGoogleError}
+                  disabled={loading || googleLoading}
+                />
+                {getAllowedDomains().length > 0 && (
+                  <p className="mt-2 text-center text-xs text-slate-500">
+                    Only {getAllowedDomains().join(' or ')} Google accounts can register.
+                  </p>
+                )}
+              </>
+            )}
+            {googleLoading && (
+              <p className="text-center text-sm text-slate-600">Completing sign-in…</p>
+            )}
+            {googleError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+                {googleError}
+              </div>
+            )}
           </form>
           <p className="mt-8 text-center text-sm text-slate-600">
             Already have an account?{' '}

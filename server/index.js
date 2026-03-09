@@ -4,11 +4,11 @@ import cors from 'cors';
 import pg from 'pg';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
-import { isEmailAllowed, MIN_PASSWORD_LENGTH, isAdminRole, isDeanRole, isSupervisorRole, isCommunityLeaderRole, isStudentRole } from '../config/rules.js';
+import { isEmailAllowed, MIN_PASSWORD_LENGTH, validatePassword as validatePasswordRules, isAdminRole, isDeanRole, isSupervisorRole, isCommunityLeaderRole, isStudentRole } from '../config/rules.js';
 
 const { Pool } = pg;
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'graduation-project-secret';
 
 // Default DB: 10.20.10.20:5433, user postgres, database "graduation Project" (override with DATABASE_URL in .env)
@@ -62,7 +62,7 @@ async function ensureAdminUser() {
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '5mb' })); // allow base64 images for profile picture
 
-/** Build user object from DB row (no password_hash). Includes college_id (dean), community_id (supervisor), must_change_password, must_complete_profile. id forced to number for consistent JSON/JWT. */
+/** Build user object from DB row (no password_hash). Includes Gmail-sourced fields: email, first_name, middle_name, last_name, student_number. */
 function toUser(row) {
   const name = row.name ?? (([row.first_name, row.last_name].filter(Boolean).join(' ') || row.email));
   return {
@@ -70,6 +70,10 @@ function toUser(row) {
     email: row.email,
     role: row.role,
     name,
+    first_name: row.first_name ?? undefined,
+    middle_name: row.middle_name ?? undefined,
+    last_name: row.last_name ?? undefined,
+    student_number: row.student_number ?? undefined,
     created_at: row.created_at,
     college_id: row.college_id != null ? Number(row.college_id) : undefined,
     community_id: row.community_id != null ? Number(row.community_id) : undefined,
@@ -89,8 +93,8 @@ async function optionalAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, JWT_SECRET);
     const r = await pool.query(
-      'SELECT id, email, role, created_at, college_id, community_id, first_name, last_name, must_change_password, must_complete_profile FROM app_users WHERE id = $1',
-      [payload.userId]
+'SELECT id, email, role, created_at, college_id, community_id, first_name, middle_name, last_name, student_number, must_change_password, must_complete_profile FROM app_users WHERE id = $1',
+    [payload.userId]
     );
     req.user = r.rows[0] ? toUser(r.rows[0]) : null;
   } catch {
@@ -111,7 +115,7 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-/** Attach permissions to user object (admin = full access; dean, supervisor, community leader, student have role-specific permissions). Role 'user' is treated as student. */
+/** Attach permissions from user.role (stored in DB). Frontend uses these to show/hide menus and content per role. */
 function withPermissions(user) {
   if (!user) return user;
   const admin = isAdminRole(user.role);
@@ -138,7 +142,16 @@ app.get('/api/health', (req, res) => {
   res.json({ ok: true, message: 'Backend running' });
 });
 
-/** GET /api/auth/me — return current user from DB using Bearer token (includes permissions, collegeName/communityName for dean/supervisor). */
+// ========== Auth: all accounts and login are stored/verified in DB (app_users) ==========
+// - Login: SELECT from app_users by email, verify password_hash with bcrypt, return user from DB
+// - Register: INSERT into app_users
+// - Google: SELECT by email; if not found → pendingRegistration; if found → return user from DB
+// - complete-registration: INSERT into app_users (after user fills form)
+// - complete-profile: UPDATE app_users
+// - optionalAuth: load user from app_users by JWT userId for every protected request
+// - GET /api/auth/me: return user from DB (source of truth)
+
+/** GET /api/auth/me — return current user from DB using Bearer token. All user data is read from app_users (DB is source of truth). */
 app.get('/api/auth/me', optionalAuth, async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
   const user = withPermissions(req.user);
@@ -164,8 +177,9 @@ app.post('/api/auth/register', async (req, res) => {
       error: 'Please use a university email (@stu.najah.edu or @najah.edu).',
     });
   }
-  if (password.length < MIN_PASSWORD_LENGTH) {
-    return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` });
+  const pwdCheck = validatePasswordRules(password);
+  if (!pwdCheck.valid) {
+    return res.status(400).json({ error: `Password: ${pwdCheck.errors.join(', ')}.` });
   }
   try {
     const existing = await pool.query('SELECT 1 FROM app_users WHERE email = $1 LIMIT 1', [emailNorm]);
@@ -173,17 +187,36 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(409).json({ error: 'An account with this email already exists. Please log in.' });
     }
     const hash = await bcrypt.hash(password, 10);
+    // Insert using only base columns (id, email, password_hash, role, created_at) so it works before optional migrations
     const r = await pool.query(
-      "INSERT INTO app_users (email, password_hash, role) VALUES ($1, $2, 'user') RETURNING id, email, role, created_at, college_id, community_id",
+      "INSERT INTO app_users (email, password_hash, role) VALUES ($1, $2, 'student') RETURNING id, email, role, created_at",
       [emailNorm, hash]
     );
     const row = r.rows[0];
-    const user = withPermissions(toUser({ ...row, name: row.email }));
+    const userRow = {
+      ...row,
+      college_id: null,
+      community_id: null,
+      first_name: null,
+      last_name: null,
+      middle_name: null,
+      must_change_password: false,
+      must_complete_profile: true,
+      name: row.email,
+    };
+    const user = withPermissions(toUser(userRow));
+    // Ensure frontend redirects to complete-profile after signup
+    user.must_complete_profile = true;
+    try {
+      await pool.query('UPDATE app_users SET must_complete_profile = true WHERE id = $1', [row.id]);
+    } catch (_) {
+      // Column may not exist yet; response already has must_complete_profile for redirect
+    }
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
     res.status(201).json({ user, token });
   } catch (err) {
     console.error('Register error:', err);
-    res.status(500).json({ error: 'Registration failed. Please try again.' });
+    res.status(500).json({ error: err?.message || 'Registration failed. Please try again.' });
   }
 });
 
@@ -197,14 +230,14 @@ app.post('/api/auth/login', async (req, res) => {
   const emailNorm = email.toLowerCase();
   try {
     let r = await pool.query(
-      'SELECT id, email, password_hash, role, created_at, college_id, community_id, first_name, last_name, must_change_password, must_complete_profile FROM app_users WHERE email = $1 LIMIT 1',
+      'SELECT id, email, password_hash, role, created_at, college_id, community_id, first_name, middle_name, last_name, student_number, must_change_password, must_complete_profile FROM app_users WHERE email = $1 LIMIT 1',
       [emailNorm]
     );
     let row = r.rows[0];
     if (!row && emailNorm === ADMIN_EMAIL) {
       await ensureAdminUser();
       r = await pool.query(
-        'SELECT id, email, password_hash, role, created_at, college_id, community_id, first_name, last_name, must_change_password, must_complete_profile FROM app_users WHERE email = $1 LIMIT 1',
+        'SELECT id, email, password_hash, role, created_at, college_id, community_id, first_name, middle_name, last_name, student_number, must_change_password, must_complete_profile FROM app_users WHERE email = $1 LIMIT 1',
         [emailNorm]
       );
       row = r.rows[0];
@@ -277,7 +310,9 @@ app.post('/api/auth/google', async (req, res) => {
       }
     }
     const email = data.email;
-    if (!email || (data.email_verified === false)) {
+    const emailVerified = data.email_verified;
+    const isVerified = emailVerified === true || emailVerified === 'true';
+    if (!email || (emailVerified !== undefined && !isVerified)) {
       return res.status(401).json({ error: 'Could not verify your Google account.' });
     }
     if (!isEmailAllowed(email)) {
@@ -286,16 +321,33 @@ app.post('/api/auth/google', async (req, res) => {
       });
     }
     const emailNorm = email.trim().toLowerCase();
-    let row = (await pool.query('SELECT id, email, role, created_at, college_id, community_id FROM app_users WHERE email = $1 LIMIT 1', [emailNorm])).rows[0];
+    let row = (await pool.query(
+'SELECT id, email, role, created_at, college_id, community_id, first_name, middle_name, last_name, student_number, must_complete_profile FROM app_users WHERE email = $1 LIMIT 1',
+    [emailNorm]
+  )).rows[0];
+    // New Google user: do NOT create account here. Account is created only when user presses "Save and continue" on Complete Profile (POST /api/auth/complete-registration).
     if (!row) {
-      const hash = await bcrypt.hash(Math.random().toString(36), 10);
-      const r = await pool.query(
-        "INSERT INTO app_users (email, password_hash, role) VALUES ($1, $2, 'user') RETURNING id, email, role, created_at, college_id, community_id",
-        [emailNorm, hash]
+      const tempToken = jwt.sign(
+        {
+          email: emailNorm,
+          name: data.name || emailNorm,
+          given_name: data.given_name || null,
+          family_name: data.family_name || null,
+          picture: data.picture || null,
+          pendingRegistration: true,
+        },
+        JWT_SECRET,
+        { expiresIn: '15m' }
       );
-      row = r.rows[0];
+      return res.json({
+        pendingRegistration: true,
+        email: emailNorm,
+        name: data.name || emailNorm,
+        picture: data.picture || null,
+        tempToken,
+      });
     }
-    const user = withPermissions(toUser({ ...row, name: data.name || data.email }));
+    const user = withPermissions(toUser({ ...row, name: data.name || row.name || data.email }));
     if (data.picture) user.picture = data.picture;
     const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ user, token });
@@ -311,8 +363,9 @@ app.post('/api/auth/change-password', optionalAuth, requireAuth, async (req, res
   if (!oldPassword || !newPassword) {
     return res.status(400).json({ error: 'Current password and new password are required.' });
   }
-  if (newPassword.length < MIN_PASSWORD_LENGTH) {
-    return res.status(400).json({ error: `New password must be at least ${MIN_PASSWORD_LENGTH} characters.` });
+  const pwdCheck = validatePasswordRules(newPassword);
+  if (!pwdCheck.valid) {
+    return res.status(400).json({ error: `New password: ${pwdCheck.errors.join(', ')}.` });
   }
   try {
     const r = await pool.query('SELECT password_hash FROM app_users WHERE id = $1', [req.user.id]);
@@ -337,22 +390,140 @@ app.post('/api/auth/change-password', optionalAuth, requireAuth, async (req, res
   }
 });
 
-/** POST /api/auth/complete-profile — require auth; body: email, first_name, last_name, student_number, password, etc. Updates app_users and sets must_complete_profile = false. */
+/** POST /api/auth/complete-registration — no auth; body: tempToken, email, first_name, father_name, third_name, family_name, student_number, college, major, phone, password.
+ *  Maps all form fields to DB: email, first_name, middle_name (father+grandfather), last_name (family), student_number, college, major, phone.
+ *  Google-filled fields (name, student number) are taken from body when present, else from tempToken payload.
+ */
+app.post('/api/auth/complete-registration', async (req, res) => {
+  const body = req.body || {};
+  const tempToken = body.tempToken;
+  if (!tempToken) {
+    return res.status(400).json({ error: 'Missing tempToken. Please sign in with Google again.' });
+  }
+  let payload;
+  try {
+    payload = jwt.verify(tempToken, JWT_SECRET);
+  } catch {
+    return res.status(401).json({ error: 'Registration link expired. Please sign in with Google again.' });
+  }
+  if (!payload.pendingRegistration || !payload.email) {
+    return res.status(401).json({ error: 'Invalid registration token. Please sign in with Google again.' });
+  }
+  const payloadEmail = (payload.email && (payload.email + '').trim().toLowerCase()) || '';
+  const email = (typeof body.email === 'string' ? body.email.trim().toLowerCase() : '') || payloadEmail;
+  if (!email || email !== payloadEmail) {
+    return res.status(403).json({ error: 'Email does not match. Please use the same Google account.' });
+  }
+
+  // Helper: trim string from body or return ''
+  const fromBody = (key) => (typeof body[key] === 'string' ? body[key].trim() : '');
+  // Google data from token (same as form "From your Google account")
+  const nameFromToken = (typeof payload.name === 'string' ? payload.name.trim() : '') || payloadEmail;
+  const parts = nameFromToken ? nameFromToken.split(/\s+/).filter(Boolean) : [];
+  const givenFromToken = typeof payload.given_name === 'string' ? payload.given_name.trim() : '';
+  const familyFromToken = typeof payload.family_name === 'string' ? payload.family_name.trim() : '';
+  const studentFromEmail = payloadEmail ? (payloadEmail.split('@')[0] || '').trim() : '';
+
+  // First name -> DB first_name (body or token)
+  let first_name = fromBody('first_name') || givenFromToken || (parts[0] || '');
+  // Father's + Grandfather's -> DB middle_name (body or token)
+  let father_name = fromBody('father_name') || (parts[1] || null);
+  let third_name = fromBody('third_name') || (parts[2] || null);
+  if (parts.length >= 4 && (father_name == null || father_name === '')) father_name = parts[1];
+  if (parts.length >= 4 && (third_name == null || third_name === '')) third_name = parts[2];
+  if (parts.length === 3 && (father_name == null || father_name === '')) father_name = parts[1];
+  const middle_name = [father_name, third_name].filter(Boolean).join(' ') || null;
+  // Family name -> DB last_name (body or token)
+  let family_name = fromBody('family_name') || familyFromToken || (parts.length >= 2 ? parts[parts.length - 1] : parts[0] || '');
+  const last_name = family_name;
+  // Student number -> DB student_number (body or email local part from token)
+  let student_number = fromBody('student_number') || studentFromEmail;
+  if (student_number && (!first_name || !last_name)) {
+    if (!first_name) first_name = student_number;
+    if (!last_name) family_name = student_number;
+  }
+  const last_name_final = family_name || last_name;
+
+  const password = typeof body.password === 'string' ? body.password : '';
+  if (!first_name || !last_name_final || !student_number) {
+    return res.status(400).json({ error: 'First name, family name, and student number are required.' });
+  }
+  const pwdCheck = validatePasswordRules(password);
+  if (!pwdCheck.valid) {
+    return res.status(400).json({ error: `Password: ${pwdCheck.errors.join(', ')}.` });
+  }
+
+  // All form fields -> DB columns
+  const college = fromBody('college') || null;
+  const major = fromBody('major') || null;
+  const phone = fromBody('phone') || null;
+
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    const r = await pool.query(
+      `INSERT INTO app_users (email, password_hash, role, first_name, middle_name, last_name, student_number, college, major, phone, must_complete_profile)
+       VALUES ($1, $2, 'student', $3, $4, $5, $6, $7, $8, $9, false)
+       RETURNING id, email, role, created_at, college_id, community_id, first_name, middle_name, last_name, student_number, must_change_password, must_complete_profile`,
+      [
+        email,
+        hash,
+        first_name,
+        middle_name,
+        last_name_final,
+        student_number,
+        college || null,
+        major || null,
+        phone || null,
+      ]
+    );
+    const row = r.rows[0];
+    const user = withPermissions(toUser({ ...row, name: payload.name || [first_name, last_name_final].filter(Boolean).join(' ') || email }));
+    if (payload.picture) user.picture = payload.picture;
+    const token = jwt.sign({ userId: user.id }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ user, token });
+  } catch (err) {
+    if (err?.code === '23505') return res.status(409).json({ error: 'This email or student number is already registered.' });
+    console.error('Complete registration error:', err);
+    res.status(500).json({ error: 'Could not create account. Please try again.' });
+  }
+});
+
+/** POST /api/auth/complete-profile — require auth; body: email, first_name, father_name, third_name, family_name, student_number, password, etc. Values from "From your Google account" auto-fields; API falls back to current user from DB when missing. */
 app.post('/api/auth/complete-profile', optionalAuth, requireAuth, async (req, res) => {
   const body = req.body || {};
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
   if (!email || email !== req.user.email) {
     return res.status(403).json({ error: 'Cannot update another user\'s profile.' });
   }
-  const first_name = typeof body.first_name === 'string' ? body.first_name.trim() : '';
-  const last_name = typeof body.last_name === 'string' ? body.last_name.trim() : '';
-  const student_number = typeof body.student_number === 'string' ? body.student_number.trim() : '';
+  // Take name and student number from body (auto-filled section); fall back to current user from DB when missing
+  let first_name = typeof body.first_name === 'string' ? body.first_name.trim() : '';
+  let father_name = typeof body.father_name === 'string' ? body.father_name.trim() : null;
+  let third_name = typeof body.third_name === 'string' ? body.third_name.trim() : null;
+  let family_name = typeof body.family_name === 'string' ? body.family_name.trim() : '';
+  let student_number = typeof body.student_number === 'string' ? body.student_number.trim() : '';
+  const u = req.user;
+  if (!first_name && u?.first_name) first_name = u.first_name;
+  if (!family_name && u?.last_name) family_name = u.last_name;
+  if (!student_number && u?.email) student_number = (u.email.split('@')[0] || '').trim();
+  if ((father_name == null || third_name == null) && u?.middle_name) {
+    const mid = u.middle_name.trim().split(/\s+/).filter(Boolean);
+    if (father_name == null && mid[0]) father_name = mid[0];
+    if (third_name == null && mid[1]) third_name = mid[1];
+  }
+  // Use student_number (from email) as display name when body/DB lack first or family name (e.g. Google-filled flow)
+  if (student_number && (!first_name || !family_name)) {
+    if (!first_name) first_name = student_number;
+    if (!family_name) family_name = student_number;
+  }
+  const middle_name = [father_name, third_name].filter(Boolean).join(' ') || null;
+  const last_name = family_name;
   const password = typeof body.password === 'string' ? body.password : '';
   if (!first_name || !last_name || !student_number) {
-    return res.status(400).json({ error: 'First name, last name, and student number are required.' });
+    return res.status(400).json({ error: 'First name, family name, and student number are required.' });
   }
-  if (!password || password.length < MIN_PASSWORD_LENGTH) {
-    return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` });
+  const pwdCheck = validatePasswordRules(password);
+  if (!pwdCheck.valid) {
+    return res.status(400).json({ error: `Password: ${pwdCheck.errors.join(', ')}.` });
   }
   try {
     const hash = await bcrypt.hash(password, 10);
@@ -363,7 +534,7 @@ app.post('/api/auth/complete-profile', optionalAuth, requireAuth, async (req, re
         WHERE id = $9`,
       [
         first_name,
-        body.middle_name ? String(body.middle_name).trim() : null,
+        middle_name,
         last_name,
         student_number,
         body.college ? String(body.college).trim() : null,
@@ -374,14 +545,14 @@ app.post('/api/auth/complete-profile', optionalAuth, requireAuth, async (req, re
       ]
     );
     const r = await pool.query(
-      'SELECT id, email, role, created_at, college_id, community_id, first_name, last_name, must_change_password, must_complete_profile FROM app_users WHERE id = $1',
-      [req.user.id]
-    );
-    const user = withPermissions(toUser(r.rows[0]));
-    res.json({ user });
-  } catch (err) {
-    if (err?.code === '23505') return res.status(409).json({ error: 'Student number is already in use.' });
-    console.error('Complete profile error:', err);
+'SELECT id, email, role, created_at, college_id, community_id, first_name, middle_name, last_name, student_number, must_change_password, must_complete_profile FROM app_users WHERE id = $1',
+    [req.user.id]
+  );
+  const user = withPermissions(toUser(r.rows[0]));
+  res.json({ user });
+} catch (err) {
+  if (err?.code === '23505') return res.status(409).json({ error: 'Student number is already in use.' });
+  console.error('Complete profile error:', err);
     res.status(500).json({ error: 'Could not save profile. Please try again.' });
   }
 });
@@ -405,15 +576,22 @@ app.get('/api/communities', optionalAuth, async (req, res) => {
     const user = req.user;
     const collegeId = req.query.college_id != null ? req.query.college_id : (user?.role === 'dean' && user?.college_id != null ? String(user.college_id) : null);
 
-    if (user?.role === 'supervisor' && user?.community_id != null) {
+    const leaderSelect = `, leader.id AS "leaderId", leader.email AS "leaderEmail",
+      COALESCE(NULLIF(TRIM(leader.first_name || ' ' || COALESCE(leader.last_name, '')), ''), leader.email) AS "leaderName"`;
+    const leaderJoin = ` LEFT JOIN app_users leader ON leader.community_id = c.id AND leader.role IN ('supervisor', 'community_leader')`;
+
+    if ((user?.role === 'supervisor' || user?.role === 'community_leader') && user?.community_id != null) {
       const r = await pool.query(
-        'SELECT c.id, c.name, c.college_id AS "collegeId", col.name AS "collegeName" FROM communities c JOIN colleges col ON col.id = c.college_id WHERE c.id = $1',
+        `SELECT c.id, c.name, c.college_id AS "collegeId", col.name AS "collegeName"${leaderSelect}
+         FROM communities c JOIN colleges col ON col.id = c.college_id${leaderJoin}
+         WHERE c.id = $1`,
         [user.community_id]
       );
       return res.json(r.rows.length ? [r.rows[0]] : []);
     }
 
-    let q = 'SELECT c.id, c.name, c.college_id AS "collegeId", col.name AS "collegeName" FROM communities c JOIN colleges col ON col.id = c.college_id WHERE 1=1';
+    let q = `SELECT c.id, c.name, c.college_id AS "collegeId", col.name AS "collegeName"${leaderSelect}
+      FROM communities c JOIN colleges col ON col.id = c.college_id${leaderJoin} WHERE 1=1`;
     const params = [];
     if (collegeId) {
       params.push(collegeId);
@@ -428,21 +606,70 @@ app.get('/api/communities', optionalAuth, async (req, res) => {
   }
 });
 
-/** POST /api/communities — admin only. Body: { name, collegeId }. */
+/** POST /api/communities — admin only. Body: { name, collegeId, leaderId }. Each community must have a supervisor. */
 app.post('/api/communities', optionalAuth, requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { name, collegeId } = req.body || {};
+    const { name, collegeId, leaderId } = req.body || {};
     if (!name || collegeId == null) return res.status(400).json({ error: 'name and collegeId are required' });
+    if (leaderId == null || leaderId === '') return res.status(400).json({ error: 'leaderId is required. Each community must have a supervisor.' });
+    const leaderIdNum = Number(leaderId);
+    if (Number.isNaN(leaderIdNum)) return res.status(400).json({ error: 'Invalid leaderId' });
+    const userCheck = await pool.query('SELECT id, role FROM app_users WHERE id = $1', [leaderIdNum]);
+    if (userCheck.rows.length === 0) return res.status(404).json({ error: 'Leader user not found' });
+    const role = userCheck.rows[0].role;
+    if (role !== 'supervisor' && role !== 'community_leader') return res.status(400).json({ error: 'Leader must have role supervisor or community_leader' });
     const r = await pool.query(
       'INSERT INTO communities (name, college_id) VALUES ($1, $2) RETURNING id, name, college_id AS "collegeId"',
       [String(name).trim(), Number(collegeId)]
     );
+    const newId = r.rows[0].id;
+    await pool.query('UPDATE app_users SET community_id = $1 WHERE id = $2', [newId, leaderIdNum]);
     res.status(201).json(r.rows[0]);
   } catch (err) {
     if (err?.code === '23503') return res.status(400).json({ error: 'Invalid college' });
     if (err?.code === '23505') return res.status(409).json({ error: 'A community with this name already exists in this college' });
     console.error('communities create error:', err);
     res.status(500).json({ error: 'Failed to create community' });
+  }
+});
+
+/** PATCH /api/communities/:id — admin: any community; dean: only communities of their college. Body: { name }. */
+app.patch('/api/communities/:id', optionalAuth, requireAuth, async (req, res) => {
+  try {
+    const communityId = Number(req.params.id);
+    const { name } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
+    const existing = await pool.query(
+      'SELECT c.id, c.name, c.college_id FROM communities c WHERE c.id = $1',
+      [communityId]
+    );
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Community not found' });
+    const row = existing.rows[0];
+    const isAdmin = isAdminRole(req.user.role);
+    const isDean = isDeanRole(req.user.role);
+    const isCommunityLeader = isCommunityLeaderRole(req.user.role);
+    if (!isAdmin && !isDean && !isCommunityLeader) return res.status(403).json({ error: 'Only admin, dean, or community leader can edit communities' });
+    if (isDean && !isAdmin) {
+      if (req.user.college_id == null || Number(row.college_id) !== Number(req.user.college_id)) {
+        return res.status(403).json({ error: 'You can only edit communities of your college' });
+      }
+    }
+    if (isCommunityLeader && !isAdmin) {
+      if (req.user.community_id == null || Number(row.id) !== Number(req.user.community_id)) {
+        return res.status(403).json({ error: 'You can only edit the community you lead' });
+      }
+    }
+    const r = await pool.query(
+      'UPDATE communities SET name = $1 WHERE id = $2 RETURNING id, name, college_id AS "collegeId"',
+      [String(name).trim(), communityId]
+    );
+    const updated = r.rows[0];
+    const collegeName = (await pool.query('SELECT name FROM colleges WHERE id = $1', [updated.collegeId])).rows[0]?.name;
+    res.json({ ...updated, collegeName });
+  } catch (err) {
+    if (err?.code === '23505') return res.status(409).json({ error: 'A community with this name already exists in this college' });
+    console.error('communities update error:', err);
+    res.status(500).json({ error: 'Failed to update community' });
   }
 });
 
@@ -494,19 +721,28 @@ app.get('/api/majors/:id', getMajorById);
 /** GET /api/programs/:id — alias for MajorDetails page. */
 app.get('/api/programs/:id', getMajorById);
 
+const EVENTS_SELECT = `SELECT e.id, e.title, e.description, e.category, e.image, e.club_name AS "clubName", e.location,
+  e.start_date AS "startDate", e.start_time AS "startTime", e.end_date AS "endDate", e.end_time AS "endTime",
+  e.available_seats AS "availableSeats", e.price, e.price_member AS "priceMember", e.featured, e.status, e.feedback,
+  e.approval_step AS "approvalStep", e.custom_sections AS "customSections", e.created_at AS "createdAt",
+  e.community_id AS "communityId", c.name AS "communityName", col.id AS "collegeId", col.name AS "collegeName"
+  FROM events e
+  LEFT JOIN communities c ON c.id = e.community_id
+  LEFT JOIN colleges col ON col.id = c.college_id`;
+
 /** GET /api/events — public list (approved + seed upcoming/past). Optional ?status=approved. */
 app.get('/api/events', optionalAuth, async (req, res) => {
   try {
     const status = req.query.status;
-    let q = 'SELECT id, title, description, category, image, club_name AS "clubName", location, start_date AS "startDate", start_time AS "startTime", end_date AS "endDate", end_time AS "endTime", available_seats AS "availableSeats", price, price_member AS "priceMember", featured, status, feedback, approval_step AS "approvalStep", custom_sections AS "customSections", created_at AS "createdAt" FROM events WHERE 1=1';
+    let q = EVENTS_SELECT + ' WHERE 1=1';
     const params = [];
     if (status) {
       params.push(status);
-      q += ` AND status = $${params.length}`;
+      q += ` AND e.status = $${params.length}`;
     } else {
-      q += " AND (status IN ('approved', 'upcoming', 'past') OR status IS NULL)";
+      q += " AND (e.status IN ('approved', 'upcoming', 'past') OR e.status IS NULL)";
     }
-    q += ' ORDER BY start_date DESC NULLS LAST, created_at DESC';
+    q += ' ORDER BY e.start_date DESC NULLS LAST, e.created_at DESC';
     const r = await pool.query(q, params);
     res.json(r.rows);
   } catch (err) {
@@ -518,10 +754,7 @@ app.get('/api/events', optionalAuth, async (req, res) => {
 /** GET /api/events/:id */
 app.get('/api/events/:id', optionalAuth, async (req, res) => {
   try {
-    const r = await pool.query(
-      'SELECT id, title, description, category, image, club_name AS "clubName", location, start_date AS "startDate", start_time AS "startTime", end_date AS "endDate", end_time AS "endTime", available_seats AS "availableSeats", price, price_member AS "priceMember", featured, status, feedback, approval_step AS "approvalStep", custom_sections AS "customSections", created_at AS "createdAt" FROM events WHERE id = $1',
-      [req.params.id]
-    );
+    const r = await pool.query(EVENTS_SELECT + ' WHERE e.id = $1', [req.params.id]);
     if (r.rows.length === 0) return res.status(404).json({ error: 'Event not found' });
     res.json(r.rows[0]);
   } catch (err) {
@@ -533,14 +766,23 @@ app.get('/api/events/:id', optionalAuth, async (req, res) => {
 // ——— Admin-only routes (requireAdmin): add any new admin feature here and use requireAdmin ———
 // POST /api/events, PUT /api/events/:id, PATCH /api/events/:id/approve, PATCH /api/events/:id/reject,
 // DELETE /api/events/:id, GET /api/admin/events
-/** POST /api/events — admin only. */
-app.post('/api/events', optionalAuth, requireAuth, requireAdmin, async (req, res) => {
+/** POST /api/events — admin or community leader. Admin: any communityId; leader: only their community. */
+app.post('/api/events', optionalAuth, requireAuth, async (req, res) => {
   try {
+    const user = req.user;
+    const isAdmin = isAdminRole(user?.role);
+    const isLeader = (isCommunityLeaderRole(user?.role) || isSupervisorRole(user?.role)) && user?.community_id != null;
+    if (!isAdmin && !isLeader) return res.status(403).json({ error: 'Only admin or community leader can create events' });
     const b = req.body || {};
+    if (b.communityId == null) return res.status(400).json({ error: 'communityId is required. Each event must be connected to a community.' });
+    let communityId = Number(b.communityId);
+    if (isLeader && !isAdmin) {
+      if (communityId !== Number(user.community_id)) return res.status(403).json({ error: 'You can add events only for your community' });
+    }
     const id = b.id || `ev-${Date.now()}`;
     await pool.query(
-      `INSERT INTO events (id, title, description, category, image, club_name, location, start_date, start_time, end_date, end_time, available_seats, price, price_member, featured, status, feedback, approval_step, custom_sections, created_by, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,NOW())`,
+      `INSERT INTO events (id, title, description, category, image, club_name, location, start_date, start_time, end_date, end_time, available_seats, price, price_member, featured, status, feedback, approval_step, custom_sections, community_id, created_by, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,NOW())`,
       [
         id,
         b.title || '',
@@ -561,23 +803,37 @@ app.post('/api/events', optionalAuth, requireAuth, requireAdmin, async (req, res
         b.feedback || null,
         b.approvalStep ?? 0,
         JSON.stringify(b.customSections || []),
+        communityId,
         req.user.id,
       ]
     );
     const r = await pool.query('SELECT id, title, status, start_date AS "startDate", start_time AS "startTime", created_at AS "createdAt" FROM events WHERE id = $1', [id]);
     res.status(201).json(r.rows[0]);
   } catch (err) {
+    if (err?.code === '23503') return res.status(400).json({ error: 'Invalid community. Each event must be connected to an existing community.' });
     console.error('event create error:', err);
     res.status(500).json({ error: 'Failed to create event' });
   }
 });
 
-app.put('/api/events/:id', optionalAuth, requireAuth, requireAdmin, async (req, res) => {
+app.put('/api/events/:id', optionalAuth, requireAuth, async (req, res) => {
   try {
     const id = req.params.id;
+    const user = req.user;
+    const isAdmin = isAdminRole(user?.role);
+    const isLeader = (isCommunityLeaderRole(user?.role) || isSupervisorRole(user?.role)) && user?.community_id != null;
+    if (!isAdmin && !isLeader) return res.status(403).json({ error: 'Only admin or community leader can edit events' });
+    const existing = await pool.query('SELECT id, community_id FROM events WHERE id = $1', [id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Event not found' });
+    if (isLeader && !isAdmin) {
+      if (Number(existing.rows[0].community_id) !== Number(user.community_id)) return res.status(403).json({ error: 'You can edit only events of your community' });
+    }
     const b = req.body || {};
+    if (b.communityId == null) return res.status(400).json({ error: 'communityId is required. Each event must be connected to a community.' });
+    const communityId = Number(b.communityId);
+    if (isLeader && !isAdmin && communityId !== Number(user.community_id)) return res.status(403).json({ error: 'You can assign events only to your community' });
     await pool.query(
-      `UPDATE events SET title=$2, description=$3, category=$4, image=$5, club_name=$6, location=$7, start_date=$8, start_time=$9, end_date=$10, end_time=$11, available_seats=$12, price=$13, price_member=$14, featured=$15, status=$16, feedback=$17, approval_step=$18, custom_sections=$19, updated_at=NOW() WHERE id=$1`,
+      `UPDATE events SET title=$2, description=$3, category=$4, image=$5, club_name=$6, location=$7, start_date=$8, start_time=$9, end_date=$10, end_time=$11, available_seats=$12, price=$13, price_member=$14, featured=$15, status=$16, feedback=$17, approval_step=$18, custom_sections=$19, community_id=$20, updated_at=NOW() WHERE id=$1`,
       [
         id,
         b.title ?? '',
@@ -598,12 +854,14 @@ app.put('/api/events/:id', optionalAuth, requireAuth, requireAdmin, async (req, 
         b.feedback ?? null,
         b.approvalStep ?? 0,
         JSON.stringify(b.customSections || []),
+        communityId,
       ]
     );
     const r = await pool.query('SELECT id, title, status, start_date AS "startDate", start_time AS "startTime" FROM events WHERE id = $1', [id]);
     if (r.rows.length === 0) return res.status(404).json({ error: 'Event not found' });
     res.json(r.rows[0]);
   } catch (err) {
+    if (err?.code === '23503') return res.status(400).json({ error: 'Invalid community. Each event must be connected to an existing community.' });
     console.error('event update error:', err);
     res.status(500).json({ error: 'Failed to update event' });
   }
@@ -634,10 +892,18 @@ app.patch('/api/events/:id/reject', optionalAuth, requireAuth, requireAdmin, asy
   }
 });
 
-app.delete('/api/events/:id', optionalAuth, requireAuth, requireAdmin, async (req, res) => {
+app.delete('/api/events/:id', optionalAuth, requireAuth, async (req, res) => {
   try {
-    const r = await pool.query('DELETE FROM events WHERE id = $1 RETURNING id', [req.params.id]);
-    if (r.rows.length === 0) return res.status(404).json({ error: 'Event not found' });
+    const user = req.user;
+    const isAdmin = isAdminRole(user?.role);
+    const isLeader = (isCommunityLeaderRole(user?.role) || isSupervisorRole(user?.role)) && user?.community_id != null;
+    if (!isAdmin && !isLeader) return res.status(403).json({ error: 'Only admin or community leader can delete events' });
+    const existing = await pool.query('SELECT id, community_id FROM events WHERE id = $1', [req.params.id]);
+    if (existing.rows.length === 0) return res.status(404).json({ error: 'Event not found' });
+    if (isLeader && !isAdmin) {
+      if (Number(existing.rows[0].community_id) !== Number(user.community_id)) return res.status(403).json({ error: 'You can delete only events of your community' });
+    }
+    await pool.query('DELETE FROM events WHERE id = $1', [req.params.id]);
     res.status(204).send();
   } catch (err) {
     console.error('event delete error:', err);
@@ -769,12 +1035,21 @@ app.post('/api/notifications', optionalAuth, requireAuth, async (req, res) => {
   }
 });
 
-/** GET /api/admin/events — list all events for admin (full rows, any status). */
-app.get('/api/admin/events', optionalAuth, requireAuth, requireAdmin, async (req, res) => {
+/** GET /api/admin/events — admin: all events; community leader / supervisor: only events of their community. */
+app.get('/api/admin/events', optionalAuth, requireAuth, async (req, res) => {
   try {
-    const r = await pool.query(
-      'SELECT id, title, description, category, image, club_name AS "clubName", location, start_date AS "startDate", start_time AS "startTime", end_date AS "endDate", end_time AS "endTime", available_seats AS "availableSeats", price, price_member AS "priceMember", featured, status, feedback, approval_step AS "approvalStep", custom_sections AS "customSections", created_at AS "createdAt" FROM events ORDER BY created_at DESC'
-    );
+    const user = req.user;
+    const isAdmin = isAdminRole(user?.role);
+    const isLeader = (isCommunityLeaderRole(user?.role) || isSupervisorRole(user?.role)) && user?.community_id != null;
+    if (!isAdmin && !isLeader) return res.status(403).json({ error: 'Only admin or community leader can list manageable events' });
+    let q = EVENTS_SELECT + ' WHERE 1=1';
+    const params = [];
+    if (isLeader && !isAdmin) {
+      params.push(user.community_id);
+      q += ` AND e.community_id = $${params.length}`;
+    }
+    q += ' ORDER BY e.created_at DESC';
+    const r = await pool.query(q, params);
     res.json(r.rows);
   } catch (err) {
     console.error('admin events error:', err);
@@ -801,41 +1076,64 @@ app.get('/api/admin/users', optionalAuth, requireAuth, requireAdmin, async (req,
   }
 });
 
-/** PATCH /api/admin/users/:id/assign-college — assign dean to a college (one dean per college). */
+/** PATCH /api/admin/users/:id/assign-college — assign dean to a college. Each dean is connected with one college; each college has one dean. */
 app.patch('/api/admin/users/:id/assign-college', optionalAuth, requireAuth, requireAdmin, async (req, res) => {
   try {
     const userId = Number(req.params.id);
-    const { collegeId } = req.body || {};
-    if (collegeId == null) return res.status(400).json({ error: 'collegeId is required' });
+    const collegeIdNum = Number(req.body?.collegeId);
+    if (req.body?.collegeId == null || Number.isNaN(collegeIdNum)) return res.status(400).json({ error: 'collegeId is required' });
     const userCheck = await pool.query('SELECT id, role FROM app_users WHERE id = $1', [userId]);
     if (userCheck.rows.length === 0) return res.status(404).json({ error: 'User not found' });
     if (userCheck.rows[0].role !== 'dean') return res.status(400).json({ error: 'User must have role dean' });
-    await pool.query('UPDATE app_users SET college_id = $1 WHERE id = $2', [Number(collegeId), userId]);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('UPDATE app_users SET college_id = NULL WHERE role = $1 AND college_id = $2 AND id != $3', ['dean', collegeIdNum, userId]);
+      await client.query('UPDATE app_users SET college_id = $1 WHERE id = $2', [collegeIdNum, userId]);
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
     const r = await pool.query('SELECT id, email, role, college_id AS "collegeId" FROM app_users WHERE id = $1', [userId]);
     res.json(r.rows[0]);
   } catch (err) {
     if (err?.code === '23503') return res.status(400).json({ error: 'Invalid college' });
-    if (err?.code === '23505') return res.status(409).json({ error: 'This college already has a dean assigned' });
     console.error('assign college error:', err);
     res.status(500).json({ error: 'Failed to assign college' });
   }
 });
 
-/** PATCH /api/admin/users/:id/assign-community — assign supervisor to a community (one supervisor per community). */
+/** PATCH /api/admin/users/:id/assign-community — assign community leader (supervisor or community_leader). Each community has one leader; each leader leads one community. */
 app.patch('/api/admin/users/:id/assign-community', optionalAuth, requireAuth, requireAdmin, async (req, res) => {
   try {
     const userId = Number(req.params.id);
-    const { communityId } = req.body || {};
-    if (communityId == null) return res.status(400).json({ error: 'communityId is required' });
+    const communityIdNum = Number(req.body?.communityId);
+    if (req.body?.communityId == null || Number.isNaN(communityIdNum)) return res.status(400).json({ error: 'communityId is required' });
     const userCheck = await pool.query('SELECT id, role FROM app_users WHERE id = $1', [userId]);
     if (userCheck.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    if (userCheck.rows[0].role !== 'supervisor') return res.status(400).json({ error: 'User must have role supervisor' });
-    await pool.query('UPDATE app_users SET community_id = $1 WHERE id = $2', [Number(communityId), userId]);
+    const role = userCheck.rows[0].role;
+    if (role !== 'supervisor' && role !== 'community_leader') {
+      return res.status(400).json({ error: 'User must have role supervisor or community leader' });
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('UPDATE app_users SET community_id = NULL WHERE community_id = $1 AND id != $2', [communityIdNum, userId]);
+      await client.query('UPDATE app_users SET community_id = $1 WHERE id = $2', [communityIdNum, userId]);
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    } finally {
+      client.release();
+    }
     const r = await pool.query('SELECT id, email, role, community_id AS "communityId" FROM app_users WHERE id = $1', [userId]);
     res.json(r.rows[0]);
   } catch (err) {
     if (err?.code === '23503') return res.status(400).json({ error: 'Invalid community' });
-    if (err?.code === '23505') return res.status(409).json({ error: 'This community already has a supervisor assigned' });
     console.error('assign community error:', err);
     res.status(500).json({ error: 'Failed to assign community' });
   }

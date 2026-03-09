@@ -4,7 +4,7 @@ import { useGoogleLogin } from "@react-oauth/google";
 import { apiUrl } from "../api";
 import { useAuth } from "../context/AuthContext";
 import { isEmailAllowed, getEmailRuleMessage, getAllowedDomains } from "../../config/rules.js";
-import { isAdmin, isDean, isSupervisor, isCommunityLeader } from "../utils/permissions";
+import { isAdmin, isDean, isSupervisor, isCommunityLeader, isStudent } from "../utils/permissions";
 
 function GoogleGIcon() {
   return (
@@ -34,6 +34,7 @@ function GoogleSignInButton({ onSuccess, onError, disabled }) {
     onSuccess,
     onError,
     flow: "implicit",
+    scope: "email profile openid",
   });
   return (
     <button
@@ -50,8 +51,9 @@ function GoogleSignInButton({ onSuccess, onError, disabled }) {
 
 function Login() {
   const navigate = useNavigate();
-  const { setUserAndToken } = useAuth();
-  const hasGoogleClientId = Boolean(import.meta.env.VITE_GOOGLE_CLIENT_ID);
+  const { setUserAndToken, logout } = useAuth();
+  const rawClientId = (import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
+  const hasGoogleClientId = Boolean(rawClientId && rawClientId !== 'your-google-client-id.apps.googleusercontent.com');
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -103,10 +105,14 @@ function Login() {
         setUserAndToken(user, token);
         const loginState = { replace: true, state: { fromLogin: true } };
         setTimeout(() => {
-          if (isAdmin(user)) {
+          if (user.must_complete_profile) {
+            navigate("/complete-profile", loginState);
+          } else if (isAdmin(user)) {
             navigate("/admin", loginState);
           } else if (isDean(user) || isSupervisor(user) || isCommunityLeader(user)) {
             navigate("/communities", loginState);
+          } else if (isStudent(user)) {
+            navigate("/profile", loginState);
           } else {
             navigate("/events", loginState);
           }
@@ -129,35 +135,68 @@ function Login() {
     setGoogleError("");
     setGoogleLoading(true);
     try {
-      const body = response.credential
-        ? { credential: response.credential }
-        : { access_token: response.access_token };
+      const accessToken = response.access_token;
+      const credential = response.credential;
+      if (!accessToken && !credential) {
+        setGoogleError("Google did not return sign-in data. Please try again.");
+        return;
+      }
+      const body = credential
+        ? { credential }
+        : { access_token: accessToken };
       const res = await fetch(apiUrl("/api/auth/google"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setGoogleError(data.error || "Sign-in failed. Please try again.");
         return;
       }
-      if (data.user) {
+      // First-time Google login: no account yet → complete profile form, then account is created on "Save and continue"
+      // Clear any existing auth so navbar shows "Login" until they press "Save and continue" and account is created in DB
+      if (data.pendingRegistration && data.tempToken) {
+        logout();
+        sessionStorage.setItem(
+          "pendingRegistration",
+          JSON.stringify({
+            email: data.email,
+            name: data.name,
+            picture: data.picture,
+            tempToken: data.tempToken,
+          })
+        );
+        navigate("/complete-profile", { replace: true, state: { pendingRegistration: true } });
+        return;
+      }
+      // Returning user: account exists → go to profile (my data & account), admin, or communities
+      if (data.user && data.token) {
         const user = data.user;
-        setUserAndToken(user, data.token || null);
+        setUserAndToken(user, data.token);
         const loginState = { replace: true, state: { fromLogin: true } };
         setTimeout(() => {
-          if (isAdmin(user)) {
+          if (user.must_complete_profile) {
+            navigate("/complete-profile", loginState);
+          } else if (isAdmin(user)) {
             navigate("/admin", loginState);
           } else if (isDean(user) || isSupervisor(user) || isCommunityLeader(user)) {
             navigate("/communities", loginState);
+          } else if (isStudent(user)) {
+            navigate("/profile", loginState); // My profile & account (student)
           } else {
-            navigate("/events", loginState);
+            navigate("/profile", loginState); // fallback: my account
           }
         }, 0);
+      } else {
+        setGoogleError("Invalid response from server. Please try again.");
       }
-    } catch {
-      setGoogleError("Sign-in failed. Please try again.");
+    } catch (err) {
+      setGoogleError(
+        err?.message === "Failed to fetch"
+          ? "Cannot connect to server. Make sure the backend is running (npm run server)."
+          : "Sign-in failed. Please try again."
+      );
     } finally {
       setGoogleLoading(false);
     }
@@ -187,8 +226,8 @@ rgb(240, 237, 237) 38%,
         <div className="w-full max-w-md mx-auto">
           <div className="rounded-2xl border border-slate-200/80 bg-white shadow-md p-8 md:p-10">
             <div className="flex flex-col items-center mb-6">
-              <div className="h-14 w-14 rounded-full bg-[#00356b] text-white flex items-center justify-center shadow-md ring-2 ring-[#0b2d52]/10">
-                <span className="text-xl font-bold tracking-tight">N</span>
+              <div className="h-14 w-14 rounded-full overflow-hidden bg-white flex items-center justify-center shadow-md ring-2 ring-[#0b2d52]/10 flex-shrink-0">
+                <img src="/main-logo.png" alt="Main Logo - An-Najah" className="h-full w-full object-contain p-1" />
               </div>
               <div
                 className="mt-3 w-12 h-0.5 bg-amber-700/40 rounded-full"

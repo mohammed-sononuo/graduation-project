@@ -10,21 +10,17 @@ const centerLinks = [
   { to: "/majors", label: "Majors" },
   { to: "/events", label: "Events" },
   { to: "/admin", label: "Admin Portal", adminOnly: true },
-  { to: "/communities", label: "Communities", communitiesOnly: true },
+  { to: "/manage-events", label: "Manage Events", leaderOrAdmin: true },
 ];
 
 function LogoPlaceholder({ className = "" }) {
   return (
-    <svg
-      className={`flex-shrink-0 ${className}`}
-      viewBox="0 0 40 40"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      aria-hidden
-    >
-      <circle cx="20" cy="20" r="18" stroke="#00356b" strokeWidth="2" fill="none" />
-      <text x="20" y="26" fontFamily="Georgia, serif" fontSize="18" fontWeight="600" fill="#00356b" textAnchor="middle">N</text>
-    </svg>
+    <img
+      src="/main-logo.png"
+      alt="Main Logo - An-Najah National University"
+      className={`flex-shrink-0 object-contain ${className}`}
+      style={{ height: "100%", width: "auto" }}
+    />
   );
 }
 
@@ -108,7 +104,10 @@ function Navbar() {
   const communityLeader = isCommunityLeader(user);
   const roleLabel = admin ? "Administrator" : dean ? DEAN_DISPLAY_NAME : supervisor ? SUPERVISOR_DISPLAY_NAME : communityLeader ? COMMUNITY_LEADER_DISPLAY_NAME : isStudent(user) ? STUDENT_DISPLAY_NAME : null;
   const visibleCenterLinks = centerLinks.filter(
-    (link) => (link.adminOnly && !admin) || (link.communitiesOnly && !admin && !dean && !supervisor) ? false : true
+    (link) =>
+      !(link.adminOnly && !admin) &&
+      !(link.deanOrAdmin && !admin && !dean && !communityLeader) &&
+      !(link.leaderOrAdmin && !admin && !communityLeader)
   );
 
   const centerLinkClass = ({ isActive }) =>
@@ -219,8 +218,8 @@ function Navbar() {
                 <LogoPlaceholder className={scrolled ? "h-11 w-11" : "h-13 w-13"} />
               ) : (
                 <img
-                  src="/najah-logo.png"
-                  alt="An-Najah National University"
+                  src="/main-logo.png"
+                  alt="Main Logo - An-Najah National University"
                   style={{
                     height: scrolled ? '50px' : '60px',
                     width: 'auto',

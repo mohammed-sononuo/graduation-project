@@ -1,7 +1,7 @@
 /**
- * Role permissions: single place for admin, dean, supervisor, community leader, and student checks.
- * Admin has all permissions; other roles have role-specific display names from config.
- * Role 'user' is treated as Student in the UI.
+ * Role permissions: the user's role is stored in the database (app_users.role) and sent from the API.
+ * The website reads user.role (and user.permissions derived from it) to decide what to show each user.
+ * Values: admin, student, dean, supervisor, community_leader. Role 'user' is treated as Student in the UI.
  */
 import { isAdminRole, isDeanRole, isSupervisorRole, isCommunityLeaderRole, isStudentRole } from '../../config/rules.js';
 
